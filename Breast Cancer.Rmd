@@ -1,0 +1,261 @@
+Read csv and attaching the Dataset
+
+```{r}
+
+library(ggplot2)
+library(survival)
+
+cancer <- read.csv("Breast Cancer METABRIC.csv", na.strings = c(""))
+```
+
+Eliminating columns not relevant for the analysis
+
+```{r}
+cancer <- cancer[,!names(cancer) %in% 
+                   c("Cancer.Type", "HER2.status.measured.by.SNP6", 
+                     "Primary.Tumor.Laterality", "Mutation.Count",
+                     "Oncotree.Code", "X3.Gene.classifier.subtype",
+                     "ER.status.measured.by.IHC", "Integrative.Cluster",
+                     "Nottingham.prognostic.index", "Sex", "Cohort")]
+```
+
+Data cleaning
+
+```{r}
+cancer <- cancer[!is.na(cancer$Age.at.Diagnosis),]
+
+cancer <- cancer[!(cancer$Cancer.Type.Detailed == "Breast"),]
+
+filter <- (is.na(cancer$Type.of.Breast.Surgery) &
+           is.na(cancer$Chemotherapy) & 
+           is.na(cancer$Hormone.Therapy) & 
+           is.na(cancer$Radio.Therapy) &
+           is.na(cancer$Overall.Survival..Months.) & 
+           is.na(cancer$Relapse.Free.Status..Months.))
+
+cancer <- cancer[!filter,]
+
+
+relapse_not_null_surgery_null <- (!is.na(cancer$Relapse.Free.Status..Months.)) &
+                                   is.na(cancer$Type.of.Breast.Surgery)
+
+cancer$Type.of.Breast.Surgery[relapse_not_null_surgery_null] <- "Mastectomy"
+
+
+cancer$Chemotherapy <- replace(cancer$Chemotherapy, 
+                               is.na(cancer$Chemotherapy), 'No')
+
+cancer$Hormone.Therapy <- replace(cancer$Hormone.Therapy, 
+                                  is.na(cancer$Hormone.Therapy), 'No')
+
+cancer$Radio.Therapy <- replace(cancer$Radio.Therapy, 
+                                is.na(cancer$Radio.Therapy), 'No')
+```
+
+Obtaining Therapy summary
+
+```{r}
+# possible combinations 'M123', 'M13', 'M23', 'M12', 'M1', 'M2', 'M3', 'BC123', 'BC13', 'BC23', 'B12', 'BC1', 'BC2', 'BC3', 'N123', 'N12', 'N23', 'N13', 'N1', 'N2', 'N3'
+therapy_summary_function <- function(x) {
+  
+  if (x['Type.of.Breast.Surgery'] == 'Mastectomy') {
+    
+    if (x['Chemotherapy'] == 'Yes' & 
+        x['Hormone.Therapy'] == 'Yes' & 
+        x['Radio.Therapy'] == 'Yes')
+       'M123'
+    
+    else if (x['Chemotherapy'] == 'Yes' & 
+             x['Hormone.Therapy'] == 'No' & 
+             x['Radio.Therapy'] == 'Yes')
+            'M13'
+    
+    else if (x['Chemotherapy'] == 'Yes' & 
+             x['Hormone.Therapy'] == 'Yes' & 
+             x['Radio.Therapy'] == 'No')
+             'M12'
+    
+    else if (x['Chemotherapy'] == 'No' & 
+             x['Hormone.Therapy'] == 'Yes' & 
+             x['Radio.Therapy'] == 'Yes')
+             'M23'
+    
+    else if (x['Chemotherapy'] == 'Yes' & 
+             x['Hormone.Therapy'] == 'No' & 
+             x['Radio.Therapy'] == 'No')
+             'M1'
+    
+    else if (x['Chemotherapy'] == 'No' & 
+             x['Hormone.Therapy'] == 'Yes' & 
+             x['Radio.Therapy'] == 'No')
+             'M2'
+    
+    else if (x['Chemotherapy'] == 'No' & 
+             x['Hormone.Therapy'] == 'No' & 
+             x['Radio.Therapy'] == 'Yes')
+             'M3'
+    
+    else
+    'M0'
+  }
+  
+  else if (x['Type.of.Breast.Surgery'] == "Breast Conserving") {
+    
+    if (x['Chemotherapy'] == 'Yes' & 
+        x['Hormone.Therapy'] == 'Yes' & 
+        x['Radio.Therapy'] == 'Yes')
+        'BC123'
+    
+    else if (x['Chemotherapy'] == 'Yes' & 
+             x['Hormone.Therapy'] == 'No' & 
+             x['Radio.Therapy'] == 'Yes')
+             'BC13'
+    
+    else if (x['Chemotherapy'] == 'Yes' & 
+             x['Hormone.Therapy'] == 'Yes' & 
+             x['Radio.Therapy'] == 'No')
+             'BC12'
+    
+    else if (x['Chemotherapy'] == 'No' & 
+             x['Hormone.Therapy'] == 'Yes' & 
+             x['Radio.Therapy'] == 'Yes')
+             'BC23'
+    
+    else if (x['Chemotherapy'] == 'Yes' & 
+             x['Hormone.Therapy'] == 'No' & 
+             x['Radio.Therapy'] == 'No')
+             'BC1'
+    
+    else if (x['Chemotherapy'] == 'No' & 
+             x['Hormone.Therapy'] == 'Yes' & 
+             x['Radio.Therapy'] == 'No')
+             'BC2'
+    
+    else if (x['Chemotherapy'] == 'No' & 
+             x['Hormone.Therapy'] == 'No' & 
+             x['Radio.Therapy'] == 'Yes')
+             'BC3'
+    
+    else 
+    'BC0'
+  }
+  
+  else {
+  
+    if (x['Chemotherapy'] == 'Yes' & 
+        x['Hormone.Therapy'] == 'Yes' & 
+        x['Radio.Therapy'] == 'Yes')
+        'N123'
+    
+    else if (x['Chemotherapy'] == 'Yes' & 
+             x['Hormone.Therapy'] == 'No' & 
+             x['Radio.Therapy'] == 'Yes')
+             'N13'
+    
+    else if (x['Chemotherapy'] == 'Yes' & 
+             x['Hormone.Therapy'] == 'Yes' & 
+             x['Radio.Therapy'] == 'No')
+             'N12'
+    
+    else if (x['Chemotherapy'] == 'No' & 
+             x['Hormone.Therapy'] == 'Yes' & 
+             x['Radio.Therapy'] == 'Yes')
+             'N23'
+    
+    else if (x['Chemotherapy'] == 'Yes' & 
+             x['Hormone.Therapy'] == 'No' & 
+             x['Radio.Therapy'] == 'No')
+             'N1'
+    
+    else if (x['Chemotherapy'] == 'No' & 
+             x['Hormone.Therapy'] == 'Yes' & 
+             x['Radio.Therapy'] == 'No')
+             'N2'
+    
+    else if (x['Chemotherapy'] == 'No' & 
+             x['Hormone.Therapy'] == 'No' & 
+             x['Radio.Therapy'] == 'Yes')
+            'N3'
+    
+    else
+    '0'
+  }
+}
+Therapy.Summary <- apply(cancer, 1, therapy_summary_function)
+cancer <- cbind(cancer, Therapy.Summary)
+```
+
+Summary and Histogram of Age at Diagnosis, removing NA's
+
+```{r}
+
+summary(cancer$Age.at.Diagnosis) 
+ggplot(cancer, aes(x=cancer$Age.at.Diagnosis)) + 
+  geom_histogram(binwidth=5, fill = "green", color = "darkgreen") +
+  labs(x = "Age at Cancer Diagnosis", y = "Frequencies")
+
+shapiro.test(cancer$Age.at.Diagnosis) #We reject H0, not normal
+```
+
+Cancer Types
+
+```{r}
+types <- table(cancer$Cancer.Type.Detailed)
+types <- data.frame(types)
+colnames(types) <- c("type", "value")
+
+ggplot(types, aes(x = "", y = value, 
+                   fill = type)) +
+  geom_col(color = "black") +
+  labs(fill = "Type of Breast Cancer") +
+  geom_label(aes(label = value),
+            color = "white",
+            position = position_stack(vjust = 0.5),
+            show.legend = FALSE) +
+  coord_polar(theta = "y") +
+  scale_fill_brewer(palette = "spectral") +
+  theme_void() 
+```
+
+Surgery barplot
+
+```{r}
+surgery_types <- data.frame(cancer$Type.of.Breast.Surgery)
+ggplot(data = cancer, aes(x = cancer$Type.of.Breast.Surgery)) + 
+  geom_bar(fill = c("green", "darkgreen"), color = c("green", "darkgreen"))+
+  labs(x = "Type of Breast Surgery", y = "Absolute Frequencies")
+```
+
+Barplot of the Therapy Summary
+
+```{r fig.height = 7, fig.width = 13}
+surgeries <- table(cancer$Therapy.Summary)
+surgeries <- data.frame(surgeries)
+colnames(surgeries) <- c("type", "value")
+
+treatment_labels <- c("Breast Conserving Only - BC0",
+                      "Breast Conserving Chemotherapy - BC1",
+                      "Breast Conserving Chemotherapy/Hormone Therapy - BC12",
+                      "Breast Conserving Chemotherapy/Hormone Therapy/Radiotherapy - BC123",
+                      "Breast Conserving Chemotherapy/Radiotherapy - BC13",
+                      "Breast Conserving Hormone Therapy - BC2",
+                      "Breast Conserving Hormone Therapy/Radiotherapy - BC23",
+                      "Breast Conserving Radiotherapy - BC3",
+                      "Mastectomy Only - M0",
+                      "Mastectomy Chemotherapy - M1",
+                      "Mastectomy Chemotherapy/Hormone Therapy- M12",
+                      "Mastectomy Chemotherapy/Hormone Therapy/Radiotherapy - M123",
+                      "Mastectomy Chemotherapy/Radiotherapy - M13",
+                      "Mastectomy Hormone Therapy - M2",
+                      "Mastectomy Hormone Therapy/Radiotherapy - M23",
+                      "Mastectomy Radiotherapy - M3")
+
+ggplot(data = surgeries, aes(x = reorder(type, value), y = value, fill = type)) +
+  geom_bar(stat="identity") +
+  coord_flip() +
+  labs(x = "Number of Patients", y = "Type of Treatment", 
+       fill = "Type of Treatment") +
+  scale_fill_discrete(labels = treatment_labels)
+
+```
+
