@@ -3,11 +3,12 @@ ANALISI DATASET METABRIC
 
 _______ LIBRERIE NECESSARIE PER ESEGUIRE I COMANDI:
 ```{r}
-# install.packages('DAAG')
-# install.packages('corrgram')
+#install.packages('DAAG')
+#install.packages('corrgram')
 
 # LIBRERIE PER CORRELAZIONE
 library(DAAG)
+library(frailtyEM)
 library(corrgram)
 
 # LIBRERIE PER SURVIVAL ANALYSIS
@@ -24,7 +25,7 @@ library(RColorBrewer)
 _______ CARICARE DATASET
 
 ```{r}
-cancer <- read.csv(file.choose(), na.strings = c(""))
+cancer <- read.csv("METABRIC_RNA_Mutation.csv", na.strings = c(""))
 View(cancer)
 ```
 
@@ -544,7 +545,7 @@ test6$pvalue
 p.values_unadj <- c(test1$pvalue, test2$pvalue, test3$pvalue, test4$pvalue, test5$pvalue, test6$pvalue)
 names(p.values_unadj) <- c('LumA vs LumB', 'LumA vs HER2', 'LumA vs Tn', 'LumB vs HER2', 'LumB vs Tn', 'HER2 vs Tn')
 p.values_unadj
-p.values_HM <- p.adjust(p.values_unadj,method = "holm")
+p.values_HM <- p.adjust(p.values_unadj, method = "holm")
 p.values_HM
 
 decision_HM <- rep("Do not reject H0",6)
@@ -558,21 +559,27 @@ decision_HM
 2) Cox model 
 
 ```{r}
+vet2 <- survSplit(Surv(overall_survival_months, overall_survival == 0) ~
+                    age_at_diagnosis +
+                    lymph_nodes_examined_positive + 
+                    tumor_size + 
+                    er_status +
+                    her2_status+ 
+                    grade,
+                  data = cancer, 
+                  cut = c(48, 96, 144), 
+                  episode= "tgroup", 
+                  id="id")
 
-vet2 <- survSplit(Surv(overall_survival_months, overall_survival == 0) ~ lymph_nodes_examined_positive + tumor_size + sub_types + grade, data = cancer, cut=c(40,70), episode= "tgroup", id="id")
-
-# COX MODEL
-cox.mod <- coxph(Surv(overall_survival_months, event) ~ lymph_nodes_examined_positive  + sub_types:strata(tgroup) + grade, data = vet2)
-summary(cox.mod)
-
-zp2<-cox.zph(cox.mod)
-zp2
-
-# Assumptions:
-# - Both graphs need to have points distributed around 0 and without any patterns
-ggcoxdiagnostics(cox.mod, type = "martingale",linear.predictions = T)
-ggcoxdiagnostics(cox.mod, type = "deviance",linear.predictions = T)
-# - HP Assumptions (the points must stay inside the CIs)
+cox.vet2 <- coxph(Surv(overall_survival_months, event) ~
+                   age_at_diagnosis +
+                   lymph_nodes_examined_positive  + 
+                   er_status:strata(tgroup) + 
+                   her2_status +
+                   grade:strata(tgroup), 
+                  data=vet2)
+cox.zph(cox.vet2)
+summary(cox.vet2)
 
 ```
 
@@ -601,14 +608,11 @@ NEW MODEL
 cox.step <- coxph(Surv(tstart, overall_survival_months, event) ~ lymph_nodes_examined_positive + tumor_size + sub_types + neoplasm_histologic_grade:strata(tgroup), data=vet2)
 summary(cox.step)
 
-ggcoxdiagnostics(cox.step, type = "martingale",linear.predictions = T)
+ggcoxdiagnostics(cox.step, type = "martingale", linear.predictions = T)
 
-zp2<-cox.zph(cox.step)
+zp2 <- cox.zph(cox.step)
 zp2
 ```
-
-
-
 
 
 
