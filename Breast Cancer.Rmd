@@ -76,15 +76,18 @@ cancer <- cancer[!is.na(cancer$cellularity),]
 
 
 4) Creare la colonna dei sottotipi
+
 ```{r}
-cancer <- cancer[!cancer$pam50_._claudin.low_subtype == 'NC',]
-cancer$pam50_._claudin.low_subtype[cancer$pam50_._claudin.low_subtype == 'Normal'] <- 'Triple negative' 
-cancer$pam50_._claudin.low_subtype[cancer$pam50_._claudin.low_subtype == 'Basal'] <- 'Triple negative'
-cancer$pam50_._claudin.low_subtype[cancer$pam50_._claudin.low_subtype == 'claudin-low'] <- 'Triple negative'
+sub_ty <- function(x) {
+  if (x['her2_status'] == 0 & x['er_status'] == 0) 'ER-/HER2-'
+  else if (x['her2_status'] == 1 & x['er_status'] == 0) 'ER-/HER2+'
+  else if (x['her2_status'] == 0 & x['er_status'] == 1) 'ER+/HER2-'
+  else if (x['her2_status'] == 1 & x['er_status'] == 1) 'ER+/HER2+'
+  else 'No'
+}
 
-
-colnames(cancer)[7] <- 'sub_types'
-table(cancer$sub_types)
+cancer$mol_subtypes <- apply(cancer,1,sub_ty)
+cancer$mol_subtypes <- as.factor(cancer$mol_subtypes)
 ```
 
 
@@ -218,14 +221,10 @@ p
 
 2) Cancer Sub-Types Divison (how many patients we havee for each subtypes)
 ```{r}
-types <- table(cancer$sub_types)
+types <- table(cancer$mol_subtypes)
 types <- data.frame(types)
 colnames(types) <- c("type", "value")
-cancer_labels <- c("Luminal A - 629",
-                   "Luminal B - 425",
-                   "Her2 Positive - 196",
-                   "Triple negative - 469"
-                   )
+
 
 ggplot(types, aes(x = "", y = value, 
                    fill = type)) +
@@ -243,8 +242,8 @@ ggplot(types, aes(x = "", y = value,
 4) BARPLOT OF AGE FOR EACH SUBTYPES
 ```{r}
 table(cancer$neoplasm_histologic_grade[cancer$sub_types == 'claudin-low'])
-num <- c(115/665, 356/665, 165/665,     17/448, 174/448, 242/448,      4/213, 48/213, 152/213,       12/317, 86/317, 213/317)
-name <- c(rep('LumA',3), rep('LumB',3), rep('Her2',3), rep('Triple negative',3))
+num <- c(1/288, 33/288, 254/288,     0/117, 15/117, 102/117,      142/1201, 599/1201, 460/1201,       3/94, 28/94, 63/94)
+name <- c(rep('ER-/HER2-',3), rep('ER-/HER2+',3), rep('ER+/HER2-',3), rep('ER+/HER2+',3))
 grade  <- as.factor(rep(c(1,2,3), 4))
 
 data <- data.frame(name, grade, num)
@@ -262,47 +261,49 @@ _______ NON PARAMETRIC TESTS
 ```{r}
 # GRAFICI ETA'
 
-Age_lumA <- cancer$age_at_diagnosis[cancer$sub_types == 'LumA']
-shapiro.test(Age_lumA) #p-value = 7.489e-05, does not follow thee normal distribution
-Age_lumB <- cancer$age_at_diagnosis[cancer$sub_types == 'LumB']
-shapiro.test(Age_lumB) #p-value = 0.0001012, does not follow thee normal distribution
-Age_HER2 <- cancer$age_at_diagnosis[cancer$sub_types == 'Her2']
-shapiro.test(Age_HER2) #p-value = 0.5033, follows the normal distribution
-Age_Tn <- cancer$age_at_diagnosis[cancer$sub_types == 'Triple negative']
-shapiro.test(Age_Tn) #p-value = 0.009004, does not follow the normal distribution
+Age_Nothing <- cancer$age_at_diagnosis[cancer$mol_subtypes == 'ER-/HER2-']
+shapiro.test(Age_Nothing) #p-value = 7.489e-05, does not follow thee normal distribution
+Age_HER2 <- cancer$age_at_diagnosis[cancer$mol_subtypes == 'ER-/HER2+']
+shapiro.test(Age_HER2) #p-value = 0.0001012, does not follow thee normal distribution
+ Age_ER <- cancer$age_at_diagnosis[cancer$mol_subtypes == 'ER+/HER2-']
+shapiro.test(Age_ER) #p-value = 0.5033, follows the normal distribution
+Age_HER2.ER <- cancer$age_at_diagnosis[cancer$mol_subtypes == 'ER+/HER2+']
+shapiro.test(Age_HER2.PR) #p-value = 0.009004, does not follow the normal distribution
 
 
 
 par(mfrow=c(2,4))
-hist(Age_lumA, prob=T, main = 'Age of diagnosis Luminal A',xlab="",breaks = 10, col = "#69b3a2")
+hist(Age_Nothing, prob=T, main = 'Age of diagnosis ER-/HER2-',xlab="",breaks = 10, col = "#69b3a2")
 
-hist(Age_lumB, prob=T, main = 'Age of diagnosis Luminal B',xlab="",breaks = 10, col = '#404080')
+hist(Age_HER2, prob=T, main = 'Age of diagnosis ER-/HER2+',xlab="",breaks = 10, col = '#404080')
 
-hist(Age_HER2, prob=T, main = 'Age of diagnosis HER2+',xlab="",breaks = 10, col = "blue")
+hist(Age_ER, prob=T, main = 'Age of diagnosis ER+/HER2-',xlab="",breaks = 10, col = "blue")
 
-hist(Age_Tn, prob=T, main = 'Age of diagnosis Triple negative',xlab="",breaks = 10, col = "purple")
-
-
+hist(Age_HER2.ER, prob=T, main = 'Age of diagnosis ER+/HER2+',xlab="",breaks = 10, col = "purple")
 
 
-boxplot(Age_lumA,  main = 'Boxplot of Age of diagnosis Luminal A',ylab="", col = "#69b3a2")
 
-boxplot(Age_lumB,  main = 'Boxplot of Age of diagnosis Luminal B',ylab="", col = '#404080')
 
-boxplot(Age_HER2,  main = 'Boxplot of Age of diagnosis HER2+',ylab="", col = "blue")
+boxplot(Age_Nothing,  main = 'Boxplot of Age of diagnosis ER-/HER2-',ylab="", col = "#69b3a2")
 
-boxplot(Age_Tn,  main = 'Boxplot of Age of diagnosis Triple negative',ylab="", col = "purple")
+boxplot(Age_HER2,  main = 'Boxplot of Age of diagnosis ER-/HER2+',ylab="", col = '#404080')
+
+boxplot(Age_ER,  main = 'Boxplot of Age of diagnosis ER+/HER2-',ylab="", col = "blue")
+
+boxplot(Age_HER2.ER,  main = 'Boxplot of Age of diagnosis ER+/HER2+',ylab="", col = "purple")
 
 ```
 
 
 Resampling approch
 ```{r}
-t <- t.test(Age_lumA, Age_lumB, alternative = "greater", var.equal = T)
+
+# Age_Nothing / Age_HER2 / Age_ER / Age_HER2.PR
+t <- t.test(Age_ER, Age_HER2.PR, var.equal = T)
 TT <- t$statistic
 
-n1 <- length(Age_lumA)
-n2 <- length(Age_lumB)
+n1 <- length(Age_ER)
+n2 <- length(Age_HER2.ER)
 
 set.seed (1)
 B <- 10000
@@ -310,67 +311,23 @@ Tbs <- rep(NA, B)
 
 for (b in 1:B) {
   
-dat<-sample(c(Age_lumA, Age_lumB))
-Tbs[b]<-t.test(dat[1:n1], dat[(n1 + 1):(n1 + n2)], alternative = "greater", var.equal = TRUE)$statistic
+dat<-sample(c(Age_ER, Age_HER2.ER))
+Tbs[b]<-t.test(dat[1:n1], dat[(n1 + 1):(n1 + n2)], var.equal = TRUE)$statistic
 }
 
 p.value.resample <- mean ((abs(Tbs) >= abs(TT)))
 p.value.resample
-```
 
+# Age_Nothing / Age_HER2 <- No difference
+# Age_Nothing / Age_ER <- No difference
+# Age_Nothing / Age_HER2.ER <- Difference
+# Age_HER2 / Age_ER <- No difference
+# Age_HER2 / Age_HER2.ER <- No difference
+# Age_HER2.PR/ Age_ER <-No difference
 
-```{r}
-# AGE_lumA vs tutti (solo lum_b è maggiore)
-wilcox.test(Age_lumA, Age_lumB, paired=F, alternative='less',correct = T)
-# Age_LumA ha un distribuzione delle età minore rispetto a Age_lumB (p-value = 0.000342).
+# mANCA CORREZZIONE P-VALUES !!
+``` 
 
-wilcox.test(Age_lumA, Age_HER2, paired=F, alternative='greater',correct = T)
-# Age_LumA ha un distribuzione delle età maggiore rispetto a Age_HER2 (p-value = 6.258e-05).
-
-wilcox.test(Age_lumA, Age_Tn, paired=F, alternative='greater',correct = T)
-# Age_LumA ha un distribuzione delle età maggiore rispetto a Age_Tn (p-value = 4.128e-16).
-
-wilcox.test(Age_lumA, Age_Cl, paired=F, alternative='greater',correct = T)
-# Age_LumA ha un distribuzione delle età maggiore rispetto a Age_Cl (p-value = 4.128e-16).
-
-
-#AGE_lumB vs tutti (Lum_B è il tumore con le perosne più anziane)
-wilcox.test(Age_lumB, Age_HER2, paired=F, alternative='greater',correct = T)
-# Age_LumB ha un distribuzione delle età maggiore rispetto a Age_HER2 (p-value = 2.281e-10).
-
-wilcox.test(Age_lumB, Age_Tn, paired=F, alternative='greater',correct = T)
-# Age_LumB ha un distribuzione delle età maggiore rispetto a Age_Tn (p-value < 2.2e-16).
-
-wilcox.test(Age_lumA, Age_Cl, paired=F, alternative='greater',correct = T)
-# Age_LumB ha un distribuzione delle età maggiore rispetto a Age_Cl (p-value = 2.667e-07).
-
-
-#AGE_HER2 vs tutti
-wilcox.test(Age_HER2, Age_Tn, paired=F, alternative='greater',correct = T)
-# Age_HER2 ha un distribuzione delle età maggiore rispetto a Age_Tn (p-value = 0.002333).
-
-wilcox.test(Age_HER2, Age_Cl, paired=F, alternative='two.sided',correct = T)
-#There is no difference between the distribution of Age_HER2 and Age_Cl (p-value = 0.3273)
-
-#AGE_tn vs tutti
-wilcox.test(Age_Tn, Age_Cl, paired=F, alternative='two.sided',correct = T)
-#There is no difference between the distribution of Age_HER2 and Age_Cl (p-value = 0.09264)
-
-
-# CONCLUSION:
-# Greater      Lum_B --> Lum_A --> HER2 == --> Age_Cl == Age_Tn
-
-v <- c(mean(Age_lumA), mean(Age_lumB), mean(Age_HER2), mean(Age_Tn), mean(Age_Cl))
-names(v) <- c('Age_lumA', 'Age_lumB', 'Age_HER2', 'Age_Tn', 'Age_Cl')
-v
-
-#Age_lumA   Age_lumB   Age_HER2   Age_Cl     Age_Tn       
-#62.82591   65.32018   58.63934   57.16143   55.53502     
-
-
-ggplot(cancer, aes(x = sub_types, y = age_at_diagnosis)) + 
-  geom_boxplot()
-```
 2) Spearman correlation test and chi-square test between tumor grade and each single subtypes
 ```{r}
 # PRIMO TEST - Vedere la correlazione tra nottingham index e il numero di linfonodi positivi
@@ -490,10 +447,10 @@ test
 survival <- Surv(cancer$overall_survival_months, cancer$overall_survival == 0)
 
 # Creazione curve per i vari sub-types
-sub_types_curves <- survfit(survival ~ sub_types, data = cancer)
+sub_types_curves <- survfit(survival ~ mol_subtypes, data = cancer)
 
 # Plot delle curve di sopravvivenza
-survfit2(survival ~ sub_types, data = cancer) |>
+survfit2(survival ~ mol_subtypes, data = cancer) |>
   ggsurvfit(linewidth = 1) +
   add_confidence_interval() + # add confidence interval
   add_risktable() + # Add risk table
@@ -503,60 +460,116 @@ survfit2(survival ~ sub_types, data = cancer) |>
   scale_x_continuous(breaks = seq(0,1000,by=90))
 ```
 
-2) KM curves per gradi del tumore
 ```{r}
-
-```
-
-
-```{r}
-# Analizzare tramite long-rank test + BISOGNA FARE I TEST SINGOLI CON BONFERRONI !!!
-cancer$lumA <- ifelse(cancer$sub_types == 'LumA', 1, 0)
-cancer$lumB <- ifelse(cancer$sub_types == 'LumB', 1, 0)
-cancer$TN <- ifelse(cancer$sub_types == 'Triple negative', 1, 0)
-cancer$HER2 <- ifelse(cancer$sub_types == 'Her2', 1, 0)
+# Analizzare tramite long-rank test + BISOGNA FARE I TEST SINGOLI CON HOLM !!!
+cancer$NEGATIVE <- ifelse(cancer$sub_types == 'ER-/HER2-', 1, 0)
+cancer$HER2 <- ifelse(cancer$sub_types == 'ER-/HER2+', 1, 0)
+cancer$ER <- ifelse(cancer$sub_types == 'ER+/HER2-', 1, 0)
+cancer$HER2.ER <- ifelse(cancer$sub_types == 'ER+/HER2+', 1, 0)
 test <- survdiff(Surv(cancer$overall_survival_months, cancer$overall_survival == 0) ~ sub_types,data=cancer)
 test
 # The curves are different but among which is different?
 # Let's see LumA
-test1 <- survdiff(Surv(overall_survival_months, overall_survival == 0) ~ sub_types, data = cancer[cancer$sub_types == 'LumA' | cancer$sub_types == 'LumB',])
+test1 <- survdiff(Surv(overall_survival_months, overall_survival == 0) ~ mol_subtypes, data = cancer[cancer$mol_subtypes == 'ER-/HER2-' | cancer$mol_subtypes == 'ER-/HER2+',])
 test1
 
-test2 <- survdiff(Surv(overall_survival_months, overall_survival == 0) ~ sub_types, data = cancer[cancer$sub_types == 'LumA' | cancer$sub_types == 'Her2',])
+test2 <- survdiff(Surv(overall_survival_months, overall_survival == 0) ~ mol_subtypes, data = cancer[cancer$mol_subtypes == 'ER-/HER2-' | cancer$mol_subtypes == 'ER+/HER2-',])
 test2
 
-test3 <- survdiff(Surv(overall_survival_months, overall_survival == 0) ~ sub_types, data = cancer[cancer$sub_types == 'LumA' | cancer$sub_types == 'Triple negative',])
+test3 <- survdiff(Surv(overall_survival_months, overall_survival == 0) ~ mol_subtypes, data = cancer[cancer$mol_subtypes == 'ER-/HER2-' | cancer$mol_subtypes == 'ER+/HER2+',])
 test3
 
 # Let's see LumB
-test4 <- survdiff(Surv(overall_survival_months, overall_survival == 0) ~ sub_types, data = cancer[cancer$sub_types == 'LumB' | cancer$sub_types == 'Her2',])
+test4 <- survdiff(Surv(overall_survival_months, overall_survival == 0) ~ mol_subtypes, data = cancer[cancer$mol_subtypes == 'ER-/HER2+' | cancer$mol_subtypes == 'ER+/HER2-',])
 test4
 
-test5 <- survdiff(Surv(overall_survival_months, overall_survival == 0) ~ sub_types, data = cancer[cancer$sub_types == 'LumB' | cancer$sub_types == 'Triple negative',])
+test5 <- survdiff(Surv(overall_survival_months, overall_survival == 0) ~ mol_subtypes, data = cancer[cancer$mol_subtypes == 'ER-/HER2+' | cancer$mol_subtypes == 'ER+/HER2+',])
 test5
 test5$pvalue
 
 # Last test
-test6 <- survdiff(Surv(overall_survival_months, overall_survival == 0) ~ sub_types, data = cancer[cancer$sub_types == 'Her2' | cancer$sub_types == 'Triple negative',])
+test6 <- survdiff(Surv(overall_survival_months, overall_survival == 0) ~ mol_subtypes, data = cancer[cancer$mol_subtypes == 'ER+/HER2-' | cancer$mol_subtypes == 'ER+/HER2+',])
 test6
 test6$pvalue
 # Multiple testing correction
 
 p.values_unadj <- c(test1$pvalue, test2$pvalue, test3$pvalue, test4$pvalue, test5$pvalue, test6$pvalue)
-names(p.values_unadj) <- c('LumA vs LumB', 'LumA vs HER2', 'LumA vs Tn', 'LumB vs HER2', 'LumB vs Tn', 'HER2 vs Tn')
+names(p.values_unadj) <- c('ER-/HER2- vs ER-/HER2+', 'ER-/HER2- vs ER+/HER2-', 'ER-/HER2- vs ER+/HER2+', 'ER-/HER2+ vs ER+/HER2-', 'ER-/HER2+ vs ER+/HER2+', 'ER+/HER2- vs ER+/HER2+')
 p.values_unadj
 p.values_HM <- p.adjust(p.values_unadj, method = "holm")
 p.values_HM
 
 decision_HM <- rep("Do not reject H0",6)
 decision_HM[p.values_HM<=0.05] <- "Reject H0"
+names(decision_HM) <- c('ER-/HER2- vs ER-/HER2+', 'ER-/HER2- vs ER+/HER2-', 'ER-/HER2- vs ER+/HER2+', 'ER-/HER2+ vs ER+/HER2-', 'ER-/HER2+ vs ER+/HER2+', 'ER+/HER2- vs ER+/HER2+')
 decision_HM
 
-# LE UNICHE NON DIFFERENTI SONO LUMB E TRIPLE NEGATIVE, LE ALTRE SONO TUTTE DIFFERENTI
+# LE UNICHE NON DIFFERENTI SONO ER-/HER2- vs ER+/HER2+   E   ER-/HER2+ vs ER+/HER2+, LE ALTRE SONO TUTTE DIFFERENTI
 ```
 
 
-2) Cox model 
+
+
+3) KM curves per gradi del tumore
+```{r}
+# Utilizziamo la colonna sub_types per dividire a seconda del tipo di tumore presenta
+survival <- Surv(cancer$overall_survival_months, cancer$overall_survival == 0)
+
+# Creazione curve per i vari sub-types
+sub_types_curves <- survfit(survival ~ neoplasm_histologic_grade, data = cancer)
+
+# Plot delle curve di sopravvivenza
+survfit2(survival ~ neoplasm_histologic_grade, data = cancer) |>
+  ggsurvfit(linewidth = 1) +
+  add_confidence_interval() + # add confidence interval
+  add_risktable() + # Add risk table
+  add_quantile(y_value = 0.5, color = "gray50", linewidth = 0.75)+  # Specify median survival
+  labs(title = "Kaplan-Meier Curve for Subtypes of Breast Cancer Survival",
+       x="Follow-up time (months)")+
+  scale_x_continuous(breaks = seq(0,1000,by=90))
+```
+
+```{r}
+cancer$GRADE1 <- ifelse(cancer$neoplasm_histologic_grade == 1, 1, 0)
+cancer$GRADE2 <- ifelse(cancer$neoplasm_histologic_grade == 2, 1, 0)
+cancer$GRADE3 <- ifelse(cancer$neoplasm_histologic_grade == 3, 1, 0)
+
+test <- survdiff(Surv(cancer$overall_survival_months, cancer$overall_survival == 0) ~ neoplasm_histologic_grade, data=cancer)
+test
+
+# 1 vs 2
+test1 <- survdiff(Surv(overall_survival_months, overall_survival == 0) ~ neoplasm_histologic_grade, data = cancer[cancer$neoplasm_histologic_grade == 1 | cancer$neoplasm_histologic_grade == 2,])
+test1
+
+# 1 vs 3
+test2 <- survdiff(Surv(overall_survival_months, overall_survival == 0) ~ neoplasm_histologic_grade, data = cancer[cancer$neoplasm_histologic_grade == 1 | cancer$neoplasm_histologic_grade == 3,])
+test2
+
+# 2 vs 3
+test3 <- survdiff(Surv(overall_survival_months, overall_survival == 0) ~ neoplasm_histologic_grade, data = cancer[cancer$neoplasm_histologic_grade == 2 | cancer$neoplasm_histologic_grade == 3,])
+test3
+
+p.values_unadj <- c(test1$pvalue, test2$pvalue, test3$pvalue)
+names(p.values_unadj) <- c('1 vs 2','1 vs 3','2 vs 3')
+p.values_unadj
+p.values_HM <- p.adjust(p.values_unadj, method = "holm")
+p.values_HM
+
+decision_HM <- rep("Do not reject H0",3)
+decision_HM[p.values_HM<=0.05] <- "Reject H0"
+names(decision_HM) <- c('1 vs 2','1 vs 3','2 vs 3')
+decision_HM
+
+# C'è differenza tra tutte le curve
+```
+
+```{r}
+# Analizzare tramite long-rank test + BISOGNA FARE I TEST SINGOLI CON HOLM !!!
+```
+
+
+
+_______ COX MODEL (TIME DEPENDENT COEFF.)
 
 ```{r}
 vet2 <- survSplit(Surv(overall_survival_months, overall_survival == 0) ~
@@ -581,135 +594,11 @@ cox.vet2 <- coxph(Surv(overall_survival_months, event) ~
 cox.zph(cox.vet2)
 summary(cox.vet2)
 
+
 ```
 
 
-```{r}
-# VEDERE ASSUNZIONE VARIABILE SUB_TYPES
-plot(cox.zph(cox.mod, transform="identity")[2])
-abline(0,0, col=2)
-abline(h=coef(cox.mod)[3], col=3, lwd=2, lty=2)
-
-# We can see that the covariant has a really strong effect on the survival but then, over time, this effect decreases. This is called aging of the covariant
-```
-```{r}
-# VEDERE ASSUNZIONE VARIABILE GRADE
-plot(cox.zph(cox.mod, transform="identity")[4])
-abline(0,0, col=2)
-abline(h=coef(cox.mod)[3], col=3, lwd=2, lty=2)
-```
-
-
-
-
-
-NEW MODEL
-```{r}
-cox.step <- coxph(Surv(tstart, overall_survival_months, event) ~ lymph_nodes_examined_positive + tumor_size + sub_types + neoplasm_histologic_grade:strata(tgroup), data=vet2)
-summary(cox.step)
-
-ggcoxdiagnostics(cox.step, type = "martingale", linear.predictions = T)
-
-zp2 <- cox.zph(cox.step)
-zp2
-```
-
-
-
-```{r}
-#  HER2-enriched
-
-cox.mod_HER <- coxph(Surv(overall_survival_months, overall_survival == 0) ~  chemotherapy + radio_therapy + hormone_therapy, data = cancer[cancer$sub_types == 'Her2',])
-summary(cox.mod_HER)
-
-# Assumptions:
-# - Both graphs need to have points distributed around 0 and without any patterns
-ggcoxdiagnostics(cox.mod_HER, type = "martingale",linear.predictions = T)
-ggcoxdiagnostics(cox.mod_HER, type = "deviance",linear.predictions = T)
-# - HP Assumptions (the points must stay inside the CIs)
-diag.ph <- cox.zph(cox.mod_HER)
-diag.ph
-ggcoxzph(diag.ph)
-
-# TUTTO BENE
-```
-
-
-```{r}
-#  Luminal A
-
-cox.mod_LumA <- coxph(Surv(overall_survival_months, overall_survival == 0) ~ type_of_breast_surgery + chemotherapy + radio_therapy + hormone_therapy, data = cancer[cancer$sub_types == 'LumA',])
-summary(cox.mod_HER2)
-
-# !! P-VALUE TOTALE MAGGIORE DI 0.05 MODELLO NON SIGNIFICATIVO !! PROBLEMA
-
-# Assumptions:
-# - Both graphs need to have points distributed around 0 and without any patterns
-ggcoxdiagnostics(cox.mod_LumA, type = "martingale",linear.predictions = T)
-ggcoxdiagnostics(cox.mod_LumA, type = "deviance",linear.predictions = T)
-# - HP Assumptions (the points must stay inside the CIs)
-diag.ph <- cox.zph(cox.mod_LumA)
-diag.ph
-ggcoxzph(diag.ph)
-
-# VERY GOOD MODEL
-```
-
-
-```{r}
-# Luminal B HER2-
-
-cox.mod_LumB <- coxph(Surv(overall_survival_months, overall_survival == 0) ~ type_of_breast_surgery + chemotherapy + radio_therapy + hormone_therapy, data = cancer[cancer$sub_types == 'LumB',])
-summary(cox.mod_dpos)
-
-# !! P-VALUE TOTALE MAGGIORE DI 0.05 MODELLO NON SIGNIFICATIVO !! PROBLEMA
-
-# Assumptions:
-# - Both graphs need to have points distributed around 0 and without any patterns
-ggcoxdiagnostics(cox.mod_LumB, type = "martingale",linear.predictions = T)
-ggcoxdiagnostics(cox.mod_LumB, type = "deviance",linear.predictions = T)
-# - HP Assumptions (the points must stay inside the CIs)
-diag.ph <- cox.zph(cox.mod_LumB)
-diag.ph
-ggcoxzph(diag.ph)
-
-# VERY GOOD MODEL
-```
-
-
-```{r}
-# Luminal B HER2+
-
-cox.mod_Tn <- coxph(Surv(overall_survival_months, overall_survival == 0) ~ , data = cancer[cancer$sub_types == 'Triple negative',])
-summary(cox.mod_Tn)
-
-# !! P-VALUE TOTALE MAGGIORE DI 0.05 MODELLO NON SIGNIFICATIVO !! PROBLEMA
-
-# Assumptions:
-# - Both graphs need to have points distributed around 0 and without any patterns
-ggcoxdiagnostics(cox.mod_dpos, type = "martingale",linear.predictions = T)
-ggcoxdiagnostics(cox.mod_dpos, type = "deviance",linear.predictions = T)
-# - HP Assumptions (the points must stay inside the CIs)
-diag.ph <- cox.zph(cox.mod_Tn)
-diag.ph
-ggcoxzph(diag.ph)
-
-
-
-
-
-vet2 <- survSplit(Surv(overall_survival_months, overall_survival == 0) ~ type_of_breast_surgery + chemotherapy + hormone_therapy + radio_therapy, data = cancer[cancer$sub_types == 'Triple negative',], cut=c(50), episode= "tgroup", id="id")
-
-cox.step1 <- coxph(Surv(tstart, overall_survival_months, event) ~ type_of_breast_surgery:strata(tgroup) + chemotherapy:strata(tgroup) + hormone_therapy:strata(tgroup) + radio_therapy, data=vet2)
-summary(cox.step1)
-
-ph <- cox.zph(cox.step1)
-ph
-# -HP Assumption met, but the model is not significant
-```
-
-
-LOGISTIC REGRESSION
+_______ LOGISTIC REGRESSION
 
 ```{r}
 
