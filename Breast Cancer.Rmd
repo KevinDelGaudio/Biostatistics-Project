@@ -1,261 +1,843 @@
-Read csv and attaching the Dataset
+ANALISI DATASET METABRIC
 
+
+_______ LIBRERIE NECESSARIE PER ESEGUIRE I COMANDI:
 ```{r}
+# install.packages('DAAG')
+# install.packages('corrgram')
 
-library(ggplot2)
+# LIBRERIE PER CORRELAZIONE
+library(DAAG)
+library(corrgram)
+
+# LIBRERIE PER SURVIVAL ANALYSIS
 library(survival)
+library(ggsurvfit)
+library(survminer)
 
-cancer <- read.csv("Breast Cancer METABRIC.csv", na.strings = c(""))
+# LIBRERIE PER IL PLOT
+library(ggplot2)
+library(ggsurvfit)
+library(RColorBrewer)
 ```
 
-Eliminating columns not relevant for the analysis
+_______ CARICARE DATASET
 
 ```{r}
+cancer <- read.csv(file.choose(), na.strings = c(""))
+View(cancer)
+```
+
+_______ DATA-CLEANING AND CREATING NEW VARIABLES
+ 
+1) Removing columns not relevant for the analysis
+```{r}
+# GENI DI INTERESSE: PTEN, CHEK2, CDH1
+gene_of_interest <- cancer[,names(cancer) %in% 
+                   c('cdh1','gata3','tp53','pik3ca')]
+cancer <- cancer[,1:31]
 cancer <- cancer[,!names(cancer) %in% 
-                   c("Cancer.Type", "HER2.status.measured.by.SNP6", 
-                     "Primary.Tumor.Laterality", "Mutation.Count",
-                     "Oncotree.Code", "X3.Gene.classifier.subtype",
-                     "ER.status.measured.by.IHC", "Integrative.Cluster",
-                     "Nottingham.prognostic.index", "Sex", "Cohort")]
+                   c("cancer_type", "er_status_measured_by_ihc",
+                     "her2_status_measured_by_snp6",
+                     "mutation_count",
+                     "oncotree_code", 'X3.gene_classifier_subtype',
+                     "ER.status.measured.by.IHC", "integrative_cluster")]
+cancer <- cbind(cancer, gene_of_interest)
 ```
 
-Data cleaning
-
+2) Removing NA values from the dataset
 ```{r}
-cancer <- cancer[!is.na(cancer$Age.at.Diagnosis),]
+# Togliere NA per l'età di diagnosi (se ce ne sono)
+cancer <- cancer[!is.na(cancer$age_at_diagnosis),]
 
-cancer <- cancer[!(cancer$Cancer.Type.Detailed == "Breast"),]
+# Togliere tutti i tipi d itumore == 'Breast' (dovrebbero esssere 17). Perchè gli togliamo? Perchè non è un tumore specifico
+cancer <- cancer[!(cancer$cancer_type_detailed == "Breast"),]
+cancer <- cancer[!is.na(cancer$type_of_breast_surgery),]
 
-filter <- (is.na(cancer$Type.of.Breast.Surgery) &
-           is.na(cancer$Chemotherapy) & 
-           is.na(cancer$Hormone.Therapy) & 
-           is.na(cancer$Radio.Therapy) &
-           is.na(cancer$Overall.Survival..Months.) & 
-           is.na(cancer$Relapse.Free.Status..Months.))
+# Togliere le righe per i pazienti che non hanno informazioni (facendo summary(cancer) non dovrebbero essercene)
+filter <- (is.na(cancer$type_of_breast_surgery) &
+           is.na(cancer$chemotherapy) & 
+           is.na(cancer$hormone_therapy) & 
+           is.na(cancer$radio_therapy) &
+           is.na(cancer$overall_survival_months))
 
 cancer <- cancer[!filter,]
 
+# Togliere pazienti senza info sulla dimensione del tumore (sono 20)
+cancer <- cancer[!is.na(cancer$tumor_size),]
 
-relapse_not_null_surgery_null <- (!is.na(cancer$Relapse.Free.Status..Months.)) &
-                                   is.na(cancer$Type.of.Breast.Surgery)
+# Togliere i pazienti senza grado del tumore (62 pazieenti)
+cancer <- cancer[!is.na(cancer$neoplasm_histologic_grade),]
 
-cancer$Type.of.Breast.Surgery[relapse_not_null_surgery_null] <- "Mastectomy"
-
-
-cancer$Chemotherapy <- replace(cancer$Chemotherapy, 
-                               is.na(cancer$Chemotherapy), 'No')
-
-cancer$Hormone.Therapy <- replace(cancer$Hormone.Therapy, 
-                                  is.na(cancer$Hormone.Therapy), 'No')
-
-cancer$Radio.Therapy <- replace(cancer$Radio.Therapy, 
-                                is.na(cancer$Radio.Therapy), 'No')
+# Togliere i pazienti senza cellularità
+cancer <- cancer[!is.na(cancer$cellularity),]
 ```
 
-Obtaining Therapy summary
+
+4) Creare la colonna dei sottotipi
+```{r}
+cancer <- cancer[!cancer$pam50_._claudin.low_subtype == 'NC',]
+cancer$pam50_._claudin.low_subtype[cancer$pam50_._claudin.low_subtype == 'Normal'] <- 'Triple negative' 
+cancer$pam50_._claudin.low_subtype[cancer$pam50_._claudin.low_subtype == 'Basal'] <- 'Triple negative'
+cancer$pam50_._claudin.low_subtype[cancer$pam50_._claudin.low_subtype == 'claudin-low'] <- 'Triple negative'
+
+
+colnames(cancer)[7] <- 'sub_types'
+table(cancer$sub_types)
+```
+
+
+5) Traformare le colonne dei recettori in colonne binarie (0:NEGATIVO e 1:POSITIVO)
+```{r}
+cancer$er_status <- ifelse(cancer$er_status == 'Positive',1,0)
+cancer$her2_status <- ifelse(cancer$her2_status == 'Positive',1,0)
+cancer$pr_status <- ifelse(cancer$pr_status == 'Positive',1,0)
+```
+
+
+6) Column metastasis
+```{r}
+cancer$metastasis <- ifelse(cancer$gata3 < 0 & cancer$tp53 < 0 & cancer$pik3ca > 1 & cancer$cdh1 < 0, 1, 0)
+cancer$metastasis[cancer$garde == 4] <- 1
+cancer$metastasis[cancer$lymph_nodes_examined_positive > 10] <- 1
+```
+
+
+6) Tumor grade
+```{r}
+cancer$stage_size[cancer$tumor_size <= 20] <- 'T1'
+cancer$stage_size[cancer$tumor_size > 20 & cancer$tumor_size <= 50] <- 'T2'
+cancer$stage_size[cancer$tumor_size > 50] <- 'T3'
+
+cancer$stage_node[cancer$lymph_nodes_examined_positive == 0] <- 'N0'
+cancer$stage_node[cancer$lymph_nodes_examined_positive >= 1 & cancer$lymph_nodes_examined_positive <= 3] <- 'N1'
+cancer$stage_node[cancer$lymph_nodes_examined_positive > 3 & cancer$lymph_nodes_examined_positive <= 9] <- 'N2'
+cancer$stage_node[cancer$lymph_nodes_examined_positive > 9] <- 'N3'
+
+
+table(cancer$tumor_stage[cancer$stage_size == 'T3' & cancer$stage_node == 'N4'])
+
+cancer$grade <- rep(0, dim(cancer)[1])
+
+cancer$grade[cancer$stage_size == 'T1' & cancer$stage_node == 'N0'] <- 1
+cancer$grade[cancer$stage_size == 'T1' & cancer$stage_node == 'N1'] <- 2
+cancer$grade[cancer$stage_size == 'T1' & cancer$stage_node == 'N2'] <- 3
+cancer$grade[cancer$stage_size == 'T1' & cancer$stage_node == 'N3'] <- 3
+
+cancer$grade[cancer$stage_size == 'T2' & cancer$stage_node == 'N0'] <- 2
+cancer$grade[cancer$stage_size == 'T2' & cancer$stage_node == 'N1'] <- 2
+cancer$grade[cancer$stage_size == 'T2' & cancer$stage_node == 'N2'] <- 3
+cancer$grade[cancer$stage_size == 'T2' & cancer$stage_node == 'N3'] <- 3
+
+cancer$grade[cancer$stage_size == 'T3' & cancer$stage_node == 'N0'] <- 2
+cancer$grade[cancer$stage_size == 'T3' & cancer$stage_node == 'N1'] <- 3
+cancer$grade[cancer$stage_size == 'T3' & cancer$stage_node == 'N2'] <- 3
+cancer$grade[cancer$stage_size == 'T3' & cancer$stage_node == 'N3'] <- 3
+
+              
+cancer$grade[cancer$tumor_stage == 4] <- 4
+cancer$grade[cancer$metastasis == 1] <- 4
+```
 
 ```{r}
-# possible combinations 'M123', 'M13', 'M23', 'M12', 'M1', 'M2', 'M3', 'BC123', 'BC13', 'BC23', 'B12', 'BC1', 'BC2', 'BC3', 'N123', 'N12', 'N23', 'N13', 'N1', 'N2', 'N3'
-therapy_summary_function <- function(x) {
-  
-  if (x['Type.of.Breast.Surgery'] == 'Mastectomy') {
-    
-    if (x['Chemotherapy'] == 'Yes' & 
-        x['Hormone.Therapy'] == 'Yes' & 
-        x['Radio.Therapy'] == 'Yes')
-       'M123'
-    
-    else if (x['Chemotherapy'] == 'Yes' & 
-             x['Hormone.Therapy'] == 'No' & 
-             x['Radio.Therapy'] == 'Yes')
-            'M13'
-    
-    else if (x['Chemotherapy'] == 'Yes' & 
-             x['Hormone.Therapy'] == 'Yes' & 
-             x['Radio.Therapy'] == 'No')
-             'M12'
-    
-    else if (x['Chemotherapy'] == 'No' & 
-             x['Hormone.Therapy'] == 'Yes' & 
-             x['Radio.Therapy'] == 'Yes')
-             'M23'
-    
-    else if (x['Chemotherapy'] == 'Yes' & 
-             x['Hormone.Therapy'] == 'No' & 
-             x['Radio.Therapy'] == 'No')
-             'M1'
-    
-    else if (x['Chemotherapy'] == 'No' & 
-             x['Hormone.Therapy'] == 'Yes' & 
-             x['Radio.Therapy'] == 'No')
-             'M2'
-    
-    else if (x['Chemotherapy'] == 'No' & 
-             x['Hormone.Therapy'] == 'No' & 
-             x['Radio.Therapy'] == 'Yes')
-             'M3'
-    
-    else
-    'M0'
-  }
-  
-  else if (x['Type.of.Breast.Surgery'] == "Breast Conserving") {
-    
-    if (x['Chemotherapy'] == 'Yes' & 
-        x['Hormone.Therapy'] == 'Yes' & 
-        x['Radio.Therapy'] == 'Yes')
-        'BC123'
-    
-    else if (x['Chemotherapy'] == 'Yes' & 
-             x['Hormone.Therapy'] == 'No' & 
-             x['Radio.Therapy'] == 'Yes')
-             'BC13'
-    
-    else if (x['Chemotherapy'] == 'Yes' & 
-             x['Hormone.Therapy'] == 'Yes' & 
-             x['Radio.Therapy'] == 'No')
-             'BC12'
-    
-    else if (x['Chemotherapy'] == 'No' & 
-             x['Hormone.Therapy'] == 'Yes' & 
-             x['Radio.Therapy'] == 'Yes')
-             'BC23'
-    
-    else if (x['Chemotherapy'] == 'Yes' & 
-             x['Hormone.Therapy'] == 'No' & 
-             x['Radio.Therapy'] == 'No')
-             'BC1'
-    
-    else if (x['Chemotherapy'] == 'No' & 
-             x['Hormone.Therapy'] == 'Yes' & 
-             x['Radio.Therapy'] == 'No')
-             'BC2'
-    
-    else if (x['Chemotherapy'] == 'No' & 
-             x['Hormone.Therapy'] == 'No' & 
-             x['Radio.Therapy'] == 'Yes')
-             'BC3'
-    
-    else 
-    'BC0'
-  }
-  
-  else {
-  
-    if (x['Chemotherapy'] == 'Yes' & 
-        x['Hormone.Therapy'] == 'Yes' & 
-        x['Radio.Therapy'] == 'Yes')
-        'N123'
-    
-    else if (x['Chemotherapy'] == 'Yes' & 
-             x['Hormone.Therapy'] == 'No' & 
-             x['Radio.Therapy'] == 'Yes')
-             'N13'
-    
-    else if (x['Chemotherapy'] == 'Yes' & 
-             x['Hormone.Therapy'] == 'Yes' & 
-             x['Radio.Therapy'] == 'No')
-             'N12'
-    
-    else if (x['Chemotherapy'] == 'No' & 
-             x['Hormone.Therapy'] == 'Yes' & 
-             x['Radio.Therapy'] == 'Yes')
-             'N23'
-    
-    else if (x['Chemotherapy'] == 'Yes' & 
-             x['Hormone.Therapy'] == 'No' & 
-             x['Radio.Therapy'] == 'No')
-             'N1'
-    
-    else if (x['Chemotherapy'] == 'No' & 
-             x['Hormone.Therapy'] == 'Yes' & 
-             x['Radio.Therapy'] == 'No')
-             'N2'
-    
-    else if (x['Chemotherapy'] == 'No' & 
-             x['Hormone.Therapy'] == 'No' & 
-             x['Radio.Therapy'] == 'Yes')
-            'N3'
-    
-    else
-    '0'
-  }
+sub_t <- function(x) {
+  if (x['her2_status'] == 'Negative' & (x['er_status'] == 'Positive' | x['pr_status'] == 'Positive') & x['pam50_._claudin.low_subtype'] == 'LumB') 'Luminal B HER2-'
+  else if (x['her2_status'] == 'Negative' & (x['er_status'] == 'Positive' | x['pr_status'] == 'Positive') & x['pam50_._claudin.low_subtype'] == 'LumA' | x['pam50_._claudin.low_subtype'] == 'Normal' ) 'Luminal A'
+  else if (x['her2_status'] == 'Positive' & x['er_status'] == 'Negative' & x['pr_status'] == 'Negative') 'HER2-enriched'
+  else if (x['her2_status'] == 'Positive' & (x['er_status'] == 'Positive' | x['pr_status'] == 'Positive')) 'Luminal B HER2+'
+  else if (x['her2_status'] == 'Negative' & x['er_status'] == 'Negative' & x['pr_status'] == 'Negative') 'Triple negative'
+  else 'No'
 }
-Therapy.Summary <- apply(cancer, 1, therapy_summary_function)
-cancer <- cbind(cancer, Therapy.Summary)
+
+cancer$sub_types <- apply(cancer,1,sub_t) 
+table(cancer$sub_types)
+
+cancer$sub_types[cancer$sub_types == 'No' & (cancer$pam50_._claudin.low_subtype == 'Basal' | cancer$pam50_._claudin.low_subtype == 'claudin-low')] <- 'Triple negative'
+cancer$sub_types[cancer$sub_types == 'No' & (cancer$pam50_._claudin.low_subtype == 'Her2')] <- 'HER2-enriched'
 ```
 
-Summary and Histogram of Age at Diagnosis, removing NA's
 
+Transforming all the variables into FACTORS
 ```{r}
+# La colonna overall_survavial_status è la nostra colonna status, ovvera quella che ci dice se il paziente è ancora vivo (VALORE 1, ovvero censoring o ha finito lo studio) o se i paziente è morto (VALORE 0). Questo passaggio serve per creare correttamente il cox model in modo corretto.
+#  `status`: censoring status 1=censored, 2=dead
 
-summary(cancer$Age.at.Diagnosis) 
-ggplot(cancer, aes(x=cancer$Age.at.Diagnosis)) + 
+cancer$overall_survival <- replace(cancer$overall_survival, cancer$death_from_cancer == "Died of Other Causes", 1)
+cancer$overall_survival <- as.factor(cancer$overall_survival)
+
+# Comandi per trasformare le variabili in fattori
+
+# VARIABILI TRATTAMENTO
+cancer$type_of_breast_surgery <- as.factor(cancer$type_of_breast_surgery)
+cancer$chemotherapy <- as.factor(cancer$chemotherapy)
+cancer$radio_therapy <- as.factor(cancer$radio_therapy)
+cancer$hormone_therapy <- as.factor(cancer$hormone_therapy)
+#cancer$therapy_summary <- as.factor(cancer$therapy_summary)
+
+# VARIABILI TIPO DI TUMORE
+cancer$cancer_type_detailed <- as.factor(cancer$cancer_type_detailed)
+cancer$cellularity <- as.factor(cancer$cellularity)
+cancer$inferred_menopausal_state <- as.factor(cancer$inferred_menopausal_state)
+cancer$sub_types <- as.factor(cancer$sub_types)
+```
+
+_______ DESCRIPTIVE ANALYSIS
+
+1) Distribuzione dell'età
+```{r}
+summary(cancer$age_at_diagnosis) 
+ggplot(cancer, aes(x=cancer$age_at_diagnosis)) + 
   geom_histogram(binwidth=5, fill = "green", color = "darkgreen") +
   labs(x = "Age at Cancer Diagnosis", y = "Frequencies")
 
-shapiro.test(cancer$Age.at.Diagnosis) #We reject H0, not normal
+
+age_alive <- cancer$age_at_diagnosis[cancer$overall_survival == 1]
+shapiro.test(age_alive) # p-value = 5.272e-07
+age_dead <- cancer$age_at_diagnosis[cancer$overall_survival == 0]
+shapiro.test(age_dead) # p-value = 0.001477
+
+# CONFRONTARE LE DUE DISTRIBUZIONI CON TEST NON PARAMETRICO (MANN-WHITNEY U TEST)
+wilcox.test(age_alive, age_dead, paired=F, alternative='two', exact=F,correct = T)
+
+# Le due distribuzioni sono uguali (p-value = 0.2466)
+
+#GRAFICO:
+data <- data.frame(
+  type = c(rep("Alive", length(age_alive)), rep("Dead", length(age_dead))),
+  value = c(age_alive, age_dead)
+)
+
+# Represent it
+p <-ggplot(data, aes(x=value, fill=type)) +
+    geom_histogram( color="#e9ecef", alpha=0.6, position = 'identity') +
+    scale_fill_manual(values=c("#69b3a2", "#404080")) +
+    labs(fill="")
+p
 ```
 
-Cancer Types
-
+2) Cancer Sub-Types Divison (how many patients we havee for each subtypes)
 ```{r}
-types <- table(cancer$Cancer.Type.Detailed)
+types <- table(cancer$sub_types)
 types <- data.frame(types)
 colnames(types) <- c("type", "value")
+cancer_labels <- c("Luminal A - 629",
+                   "Luminal B - 425",
+                   "Her2 Positive - 196",
+                   "Triple negative - 469"
+                   )
 
 ggplot(types, aes(x = "", y = value, 
                    fill = type)) +
   geom_col(color = "black") +
   labs(fill = "Type of Breast Cancer") +
   geom_label(aes(label = value),
-            color = "white",
+            color = "Black",
             position = position_stack(vjust = 0.5),
             show.legend = FALSE) +
   coord_polar(theta = "y") +
-  scale_fill_brewer(palette = "spectral") +
-  theme_void() 
+  scale_fill_brewer(palette = "Green") +
+  theme_void()
 ```
 
-Surgery barplot
+4) BARPLOT OF AGE FOR EACH SUBTYPES
+```{r}
+table(cancer$neoplasm_histologic_grade[cancer$sub_types == 'claudin-low'])
+num <- c(115/665, 356/665, 165/665,     17/448, 174/448, 242/448,      4/213, 48/213, 152/213,       12/317, 86/317, 213/317)
+name <- c(rep('LumA',3), rep('LumB',3), rep('Her2',3), rep('Triple negative',3))
+grade  <- as.factor(rep(c(1,2,3), 4))
+
+data <- data.frame(name, grade, num)
+ggplot(data, aes(fill= grade, y= num, x=name)) + 
+    geom_bar(position="dodge", stat="identity") +
+    ggtitle("Histologic grades by tumor sub-types") +
+    labs(y= "Frequncies", x = "Tumor sub-types") +
+    scale_fill_manual(values=c('purple', 'dark blue', 'light blue'))
+```
+
+
+_______ NON PARAMETRIC TESTS
+
+!) Whitney-mann U test to see if there is a different age distribution among tumor sub-types
+```{r}
+# GRAFICI ETA'
+
+Age_lumA <- cancer$age_at_diagnosis[cancer$sub_types == 'LumA']
+shapiro.test(Age_lumA) #p-value = 7.489e-05, does not follow thee normal distribution
+Age_lumB <- cancer$age_at_diagnosis[cancer$sub_types == 'LumB']
+shapiro.test(Age_lumB) #p-value = 0.0001012, does not follow thee normal distribution
+Age_HER2 <- cancer$age_at_diagnosis[cancer$sub_types == 'Her2']
+shapiro.test(Age_HER2) #p-value = 0.5033, follows the normal distribution
+Age_Tn <- cancer$age_at_diagnosis[cancer$sub_types == 'Triple negative']
+shapiro.test(Age_Tn) #p-value = 0.009004, does not follow the normal distribution
+
+
+
+par(mfrow=c(2,4))
+hist(Age_lumA, prob=T, main = 'Age of diagnosis Luminal A',xlab="",breaks = 10, col = "#69b3a2")
+
+hist(Age_lumB, prob=T, main = 'Age of diagnosis Luminal B',xlab="",breaks = 10, col = '#404080')
+
+hist(Age_HER2, prob=T, main = 'Age of diagnosis HER2+',xlab="",breaks = 10, col = "blue")
+
+hist(Age_Tn, prob=T, main = 'Age of diagnosis Triple negative',xlab="",breaks = 10, col = "purple")
+
+
+
+
+boxplot(Age_lumA,  main = 'Boxplot of Age of diagnosis Luminal A',ylab="", col = "#69b3a2")
+
+boxplot(Age_lumB,  main = 'Boxplot of Age of diagnosis Luminal B',ylab="", col = '#404080')
+
+boxplot(Age_HER2,  main = 'Boxplot of Age of diagnosis HER2+',ylab="", col = "blue")
+
+boxplot(Age_Tn,  main = 'Boxplot of Age of diagnosis Triple negative',ylab="", col = "purple")
+
+```
+
+
+Resampling approch
+```{r}
+t <- t.test(Age_lumA, Age_lumB, alternative = "greater", var.equal = T)
+TT <- t$statistic
+
+n1 <- length(Age_lumA)
+n2 <- length(Age_lumB)
+
+set.seed (1)
+B <- 10000
+Tbs <- rep(NA, B)
+
+for (b in 1:B) {
+  
+dat<-sample(c(Age_lumA, Age_lumB))
+Tbs[b]<-t.test(dat[1:n1], dat[(n1 + 1):(n1 + n2)], alternative = "greater", var.equal = TRUE)$statistic
+}
+
+p.value.resample <- mean ((abs(Tbs) >= abs(TT)))
+p.value.resample
+```
+
 
 ```{r}
-surgery_types <- data.frame(cancer$Type.of.Breast.Surgery)
-ggplot(data = cancer, aes(x = cancer$Type.of.Breast.Surgery)) + 
-  geom_bar(fill = c("green", "darkgreen"), color = c("green", "darkgreen"))+
-  labs(x = "Type of Breast Surgery", y = "Absolute Frequencies")
+# AGE_lumA vs tutti (solo lum_b è maggiore)
+wilcox.test(Age_lumA, Age_lumB, paired=F, alternative='less',correct = T)
+# Age_LumA ha un distribuzione delle età minore rispetto a Age_lumB (p-value = 0.000342).
+
+wilcox.test(Age_lumA, Age_HER2, paired=F, alternative='greater',correct = T)
+# Age_LumA ha un distribuzione delle età maggiore rispetto a Age_HER2 (p-value = 6.258e-05).
+
+wilcox.test(Age_lumA, Age_Tn, paired=F, alternative='greater',correct = T)
+# Age_LumA ha un distribuzione delle età maggiore rispetto a Age_Tn (p-value = 4.128e-16).
+
+wilcox.test(Age_lumA, Age_Cl, paired=F, alternative='greater',correct = T)
+# Age_LumA ha un distribuzione delle età maggiore rispetto a Age_Cl (p-value = 4.128e-16).
+
+
+#AGE_lumB vs tutti (Lum_B è il tumore con le perosne più anziane)
+wilcox.test(Age_lumB, Age_HER2, paired=F, alternative='greater',correct = T)
+# Age_LumB ha un distribuzione delle età maggiore rispetto a Age_HER2 (p-value = 2.281e-10).
+
+wilcox.test(Age_lumB, Age_Tn, paired=F, alternative='greater',correct = T)
+# Age_LumB ha un distribuzione delle età maggiore rispetto a Age_Tn (p-value < 2.2e-16).
+
+wilcox.test(Age_lumA, Age_Cl, paired=F, alternative='greater',correct = T)
+# Age_LumB ha un distribuzione delle età maggiore rispetto a Age_Cl (p-value = 2.667e-07).
+
+
+#AGE_HER2 vs tutti
+wilcox.test(Age_HER2, Age_Tn, paired=F, alternative='greater',correct = T)
+# Age_HER2 ha un distribuzione delle età maggiore rispetto a Age_Tn (p-value = 0.002333).
+
+wilcox.test(Age_HER2, Age_Cl, paired=F, alternative='two.sided',correct = T)
+#There is no difference between the distribution of Age_HER2 and Age_Cl (p-value = 0.3273)
+
+#AGE_tn vs tutti
+wilcox.test(Age_Tn, Age_Cl, paired=F, alternative='two.sided',correct = T)
+#There is no difference between the distribution of Age_HER2 and Age_Cl (p-value = 0.09264)
+
+
+# CONCLUSION:
+# Greater      Lum_B --> Lum_A --> HER2 == --> Age_Cl == Age_Tn
+
+v <- c(mean(Age_lumA), mean(Age_lumB), mean(Age_HER2), mean(Age_Tn), mean(Age_Cl))
+names(v) <- c('Age_lumA', 'Age_lumB', 'Age_HER2', 'Age_Tn', 'Age_Cl')
+v
+
+#Age_lumA   Age_lumB   Age_HER2   Age_Cl     Age_Tn       
+#62.82591   65.32018   58.63934   57.16143   55.53502     
+
+
+ggplot(cancer, aes(x = sub_types, y = age_at_diagnosis)) + 
+  geom_boxplot()
+```
+2) Spearman correlation test and chi-square test between tumor grade and each single subtypes
+```{r}
+# PRIMO TEST - Vedere la correlazione tra nottingham index e il numero di linfonodi positivi
+lumA <- ifelse(cancer$sub_types == 'LumA', 1, 0)
+lumB <- ifelse(cancer$sub_types == 'LumB', 1, 0)
+HER2 <- ifelse(cancer$sub_types == 'Her2', 1, 0)
+Tn <- ifelse(cancer$sub_types == 'Triple negative', 1, 0)
+
+# CHI-SUQARE TEST
+
+# LUMINAL A
+contingency_table <- table(lumA, cancer$tumor_stage)
+contingency_table
+test1 <- chisq.test(contingency_table)
+# c'è associazione p-value = 0.0001516
+test1.1 <- cor.test(lumA, cancer$tumor_stage, method = 's')
+# c'è correlazione negativa p-value = 6.823e-06
+
+# LUMINAL B
+contingency_table <- table(lumB, cancer$tumor_stage)
+contingency_table
+test2 <- chisq.test(contingency_table)
+# Non c'è associazione p-value = 0.216
+test2.1 <- cor.test(lumB, cancer$tumor_stage, method = 's')
+# Non c'è correlazione p-value = 0.05944
+
+# HER2
+contingency_table <- table(HER2, cancer$tumor_stage)
+contingency_table
+test3 <- chisq.test(contingency_table)
+# C'è associazione p-value = 0.00287
+test3.1 <- cor.test(HER2, cancer$tumor_stage, method = 's')
+# C'è una debole (rho = 0.09870116) correlazione p-value = 0.0004457
+
+# Triple Negative
+# HER2
+contingency_table <- table(Tn, cancer$tumor_stage)
+contingency_table
+test4 <- chisq.test(contingency_table)
+# Non c'è associazione p-value = 0.4416
+test4.1 <- cor.test(Tn, cancer$tumor_stage, method = 's')
+# Non c'è una correlazione p-value = 0.4926
+
+
+# Multiple testing correction
+p.values_unadj <- c(test1$p.value, test1.1$p.value, test2$p.value, test2.1$p.value, test3$p.value, test3.1$p.value, test4$p.value, test4.1$p.value)
+names(p.values_unadj) <- c('LumA CQ', 'LumA S corr.', 'LumB CQ', 'LumB S corr.', 'HER2 CQ', 'HER2 S corr.', 'Tn CQ', 'Tn S corr.')
+p.values_unadj
+p.values_HM <- p.adjust(p.values_unadj,method = "holm")
+p.values_HM
+
+decision_HM <- rep("Do not reject H0",6)
+decision_HM[p.values_HM<=0.05] <- "Reject H0"
+decision_HM
 ```
 
-Barplot of the Therapy Summary
 
-```{r fig.height = 7, fig.width = 13}
-surgeries <- table(cancer$Therapy.Summary)
-surgeries <- data.frame(surgeries)
-colnames(surgeries) <- c("type", "value")
+```{r}
+# rho  = 0.7345323
+# Grafico:
+cancer$nottingham_prognostic_index <- round(cancer$nottingham_prognostic_index)
+ggboxplot(cancer, x = 'nottingham_prognostic_index', y = 'lymph_nodes_examined_positive')
+boxplot(cancer$lymph_nodes_examined_positive ~ cancer$nottingham_prognostic_index)
 
-treatment_labels <- c("Breast Conserving Only - BC0",
-                      "Breast Conserving Chemotherapy - BC1",
-                      "Breast Conserving Chemotherapy/Hormone Therapy - BC12",
-                      "Breast Conserving Chemotherapy/Hormone Therapy/Radiotherapy - BC123",
-                      "Breast Conserving Chemotherapy/Radiotherapy - BC13",
-                      "Breast Conserving Hormone Therapy - BC2",
-                      "Breast Conserving Hormone Therapy/Radiotherapy - BC23",
-                      "Breast Conserving Radiotherapy - BC3",
-                      "Mastectomy Only - M0",
-                      "Mastectomy Chemotherapy - M1",
-                      "Mastectomy Chemotherapy/Hormone Therapy- M12",
-                      "Mastectomy Chemotherapy/Hormone Therapy/Radiotherapy - M123",
-                      "Mastectomy Chemotherapy/Radiotherapy - M13",
-                      "Mastectomy Hormone Therapy - M2",
-                      "Mastectomy Hormone Therapy/Radiotherapy - M23",
-                      "Mastectomy Radiotherapy - M3")
+# SECONDO TEST - Vedere la correlazione tra nottingham index e la dimensione del tumore
+cor.test(cancer$tumor_size, cancer$nottingham_prognostic_index, method = 's')
 
-ggplot(data = surgeries, aes(x = reorder(type, value), y = value, fill = type)) +
-  geom_bar(stat="identity") +
-  coord_flip() +
-  labs(x = "Number of Patients", y = "Type of Treatment", 
-       fill = "Type of Treatment") +
-  scale_fill_discrete(labels = treatment_labels)
+#rho = 0.3055113
+# Grafico:
+boxplot(cancer$tumor_size ~ cancer$nottingham_prognostic_index)
+ggboxplot(cancer, x = 'nottingham_prognostic_index', y = 'tumor_size')
+```
+
+
+
+```{r}
+# SCATTER PLOT DA SISTEMARE
+model <- lm(cancer$nottingham_prognostic_index ~ cancer$lymph_nodes_examined_positive)
+y <- predict(model, new_data = cancer$lymph_nodes_examined_positive, interval = 'confidence') 
+
+plot(log(cancer$lymph_nodes_examined_positive), cancer$nottingham_prognostic_index)
+matlines(exp(cancer$lymph_nodes_examined_positive), y, lwd = 2)
+curve(coef(mod.log)[1] + coef(mod.log)[2]*log(cancer$nottingham_prognostic_index), add=TRUE)
+```
+
+
+_______ SURVIAVL ANALYSIS
+
+1) KM curves per posizione del tumore
+```{r}
+cancer <- cancer[!(cancer$cancer_type_detailed == 'Metaplastic Breast Cancer' | cancer$cancer_type_detailed == 'Breast Invasive Mixed Mucinous Carcinoma'),]
+
+# Utilizziamo la colonna sub_types per dividire a seconda del tipo di tumore presenta
+survival <- Surv(cancer$overall_survival_months, cancer$overall_survival == 0)
+
+# Creazione curve per i vari sub-types
+sub_types_curves <- survfit(survival ~ cancer_type_detailed, data = cancer)
+
+# Plot delle curve di sopravvivenza
+survfit2(survival ~ cancer_type_detailed, data = cancer) |>
+  ggsurvfit(linewidth = 1) +
+  add_confidence_interval() + # add confidence interval
+  add_risktable() + # Add risk table
+  add_quantile(y_value = 0.5, color = "gray50", linewidth = 0.75)+  # Specify median survival
+  labs(title = "Kaplan-Meier Curve for Subtypes of Breast Cancer Survival",
+       x="Follow-up time (months)")+
+  scale_x_continuous(breaks = seq(0,1000,by=90))
+
+test <- survdiff(Surv(cancer$overall_survival_months, cancer$overall_survival == 0) ~ cancer_type_detailed,data=cancer)
+test
+# p= 0.6 NO DIFFERENCE BETWEEN THE CURVES
+```
+
+2) KM curves per i vari sottotipi di tumore
+```{r}
+# Utilizziamo la colonna sub_types per dividire a seconda del tipo di tumore presenta
+survival <- Surv(cancer$overall_survival_months, cancer$overall_survival == 0)
+
+# Creazione curve per i vari sub-types
+sub_types_curves <- survfit(survival ~ sub_types, data = cancer)
+
+# Plot delle curve di sopravvivenza
+survfit2(survival ~ sub_types, data = cancer) |>
+  ggsurvfit(linewidth = 1) +
+  add_confidence_interval() + # add confidence interval
+  add_risktable() + # Add risk table
+  add_quantile(y_value = 0.5, color = "gray50", linewidth = 0.75)+  # Specify median survival
+  labs(title = "Kaplan-Meier Curve for Subtypes of Breast Cancer Survival",
+       x="Follow-up time (months)")+
+  scale_x_continuous(breaks = seq(0,1000,by=90))
+```
+
+2) KM curves per gradi del tumore
+```{r}
 
 ```
 
+
+```{r}
+# Analizzare tramite long-rank test + BISOGNA FARE I TEST SINGOLI CON BONFERRONI !!!
+cancer$lumA <- ifelse(cancer$sub_types == 'LumA', 1, 0)
+cancer$lumB <- ifelse(cancer$sub_types == 'LumB', 1, 0)
+cancer$TN <- ifelse(cancer$sub_types == 'Triple negative', 1, 0)
+cancer$HER2 <- ifelse(cancer$sub_types == 'Her2', 1, 0)
+test <- survdiff(Surv(cancer$overall_survival_months, cancer$overall_survival == 0) ~ sub_types,data=cancer)
+test
+# The curves are different but among which is different?
+# Let's see LumA
+test1 <- survdiff(Surv(overall_survival_months, overall_survival == 0) ~ sub_types, data = cancer[cancer$sub_types == 'LumA' | cancer$sub_types == 'LumB',])
+test1
+
+test2 <- survdiff(Surv(overall_survival_months, overall_survival == 0) ~ sub_types, data = cancer[cancer$sub_types == 'LumA' | cancer$sub_types == 'Her2',])
+test2
+
+test3 <- survdiff(Surv(overall_survival_months, overall_survival == 0) ~ sub_types, data = cancer[cancer$sub_types == 'LumA' | cancer$sub_types == 'Triple negative',])
+test3
+
+# Let's see LumB
+test4 <- survdiff(Surv(overall_survival_months, overall_survival == 0) ~ sub_types, data = cancer[cancer$sub_types == 'LumB' | cancer$sub_types == 'Her2',])
+test4
+
+test5 <- survdiff(Surv(overall_survival_months, overall_survival == 0) ~ sub_types, data = cancer[cancer$sub_types == 'LumB' | cancer$sub_types == 'Triple negative',])
+test5
+test5$pvalue
+
+# Last test
+test6 <- survdiff(Surv(overall_survival_months, overall_survival == 0) ~ sub_types, data = cancer[cancer$sub_types == 'Her2' | cancer$sub_types == 'Triple negative',])
+test6
+test6$pvalue
+# Multiple testing correction
+
+p.values_unadj <- c(test1$pvalue, test2$pvalue, test3$pvalue, test4$pvalue, test5$pvalue, test6$pvalue)
+names(p.values_unadj) <- c('LumA vs LumB', 'LumA vs HER2', 'LumA vs Tn', 'LumB vs HER2', 'LumB vs Tn', 'HER2 vs Tn')
+p.values_unadj
+p.values_HM <- p.adjust(p.values_unadj,method = "holm")
+p.values_HM
+
+decision_HM <- rep("Do not reject H0",6)
+decision_HM[p.values_HM<=0.05] <- "Reject H0"
+decision_HM
+
+# LE UNICHE NON DIFFERENTI SONO LUMB E TRIPLE NEGATIVE, LE ALTRE SONO TUTTE DIFFERENTI
+```
+
+
+2) Cox model 
+
+```{r}
+
+vet2 <- survSplit(Surv(overall_survival_months, overall_survival == 0) ~ lymph_nodes_examined_positive + tumor_size + sub_types + grade, data = cancer, cut=c(40,70), episode= "tgroup", id="id")
+
+# COX MODEL
+cox.mod <- coxph(Surv(overall_survival_months, event) ~ lymph_nodes_examined_positive  + sub_types:strata(tgroup) + grade, data = vet2)
+summary(cox.mod)
+
+zp2<-cox.zph(cox.mod)
+zp2
+
+# Assumptions:
+# - Both graphs need to have points distributed around 0 and without any patterns
+ggcoxdiagnostics(cox.mod, type = "martingale",linear.predictions = T)
+ggcoxdiagnostics(cox.mod, type = "deviance",linear.predictions = T)
+# - HP Assumptions (the points must stay inside the CIs)
+
+```
+
+
+```{r}
+# VEDERE ASSUNZIONE VARIABILE SUB_TYPES
+plot(cox.zph(cox.mod, transform="identity")[2])
+abline(0,0, col=2)
+abline(h=coef(cox.mod)[3], col=3, lwd=2, lty=2)
+
+# We can see that the covariant has a really strong effect on the survival but then, over time, this effect decreases. This is called aging of the covariant
+```
+```{r}
+# VEDERE ASSUNZIONE VARIABILE GRADE
+plot(cox.zph(cox.mod, transform="identity")[4])
+abline(0,0, col=2)
+abline(h=coef(cox.mod)[3], col=3, lwd=2, lty=2)
+```
+
+
+
+
+
+NEW MODEL
+```{r}
+cox.step <- coxph(Surv(tstart, overall_survival_months, event) ~ lymph_nodes_examined_positive + tumor_size + sub_types + neoplasm_histologic_grade:strata(tgroup), data=vet2)
+summary(cox.step)
+
+ggcoxdiagnostics(cox.step, type = "martingale",linear.predictions = T)
+
+zp2<-cox.zph(cox.step)
+zp2
+```
+
+
+
+
+
+
+```{r}
+#  HER2-enriched
+
+cox.mod_HER <- coxph(Surv(overall_survival_months, overall_survival == 0) ~  chemotherapy + radio_therapy + hormone_therapy, data = cancer[cancer$sub_types == 'Her2',])
+summary(cox.mod_HER)
+
+# Assumptions:
+# - Both graphs need to have points distributed around 0 and without any patterns
+ggcoxdiagnostics(cox.mod_HER, type = "martingale",linear.predictions = T)
+ggcoxdiagnostics(cox.mod_HER, type = "deviance",linear.predictions = T)
+# - HP Assumptions (the points must stay inside the CIs)
+diag.ph <- cox.zph(cox.mod_HER)
+diag.ph
+ggcoxzph(diag.ph)
+
+# TUTTO BENE
+```
+
+
+```{r}
+#  Luminal A
+
+cox.mod_LumA <- coxph(Surv(overall_survival_months, overall_survival == 0) ~ type_of_breast_surgery + chemotherapy + radio_therapy + hormone_therapy, data = cancer[cancer$sub_types == 'LumA',])
+summary(cox.mod_HER2)
+
+# !! P-VALUE TOTALE MAGGIORE DI 0.05 MODELLO NON SIGNIFICATIVO !! PROBLEMA
+
+# Assumptions:
+# - Both graphs need to have points distributed around 0 and without any patterns
+ggcoxdiagnostics(cox.mod_LumA, type = "martingale",linear.predictions = T)
+ggcoxdiagnostics(cox.mod_LumA, type = "deviance",linear.predictions = T)
+# - HP Assumptions (the points must stay inside the CIs)
+diag.ph <- cox.zph(cox.mod_LumA)
+diag.ph
+ggcoxzph(diag.ph)
+
+# VERY GOOD MODEL
+```
+
+
+```{r}
+# Luminal B HER2-
+
+cox.mod_LumB <- coxph(Surv(overall_survival_months, overall_survival == 0) ~ type_of_breast_surgery + chemotherapy + radio_therapy + hormone_therapy, data = cancer[cancer$sub_types == 'LumB',])
+summary(cox.mod_dpos)
+
+# !! P-VALUE TOTALE MAGGIORE DI 0.05 MODELLO NON SIGNIFICATIVO !! PROBLEMA
+
+# Assumptions:
+# - Both graphs need to have points distributed around 0 and without any patterns
+ggcoxdiagnostics(cox.mod_LumB, type = "martingale",linear.predictions = T)
+ggcoxdiagnostics(cox.mod_LumB, type = "deviance",linear.predictions = T)
+# - HP Assumptions (the points must stay inside the CIs)
+diag.ph <- cox.zph(cox.mod_LumB)
+diag.ph
+ggcoxzph(diag.ph)
+
+# VERY GOOD MODEL
+```
+
+
+```{r}
+# Luminal B HER2+
+
+cox.mod_Tn <- coxph(Surv(overall_survival_months, overall_survival == 0) ~ , data = cancer[cancer$sub_types == 'Triple negative',])
+summary(cox.mod_Tn)
+
+# !! P-VALUE TOTALE MAGGIORE DI 0.05 MODELLO NON SIGNIFICATIVO !! PROBLEMA
+
+# Assumptions:
+# - Both graphs need to have points distributed around 0 and without any patterns
+ggcoxdiagnostics(cox.mod_dpos, type = "martingale",linear.predictions = T)
+ggcoxdiagnostics(cox.mod_dpos, type = "deviance",linear.predictions = T)
+# - HP Assumptions (the points must stay inside the CIs)
+diag.ph <- cox.zph(cox.mod_Tn)
+diag.ph
+ggcoxzph(diag.ph)
+
+
+
+
+
+vet2 <- survSplit(Surv(overall_survival_months, overall_survival == 0) ~ type_of_breast_surgery + chemotherapy + hormone_therapy + radio_therapy, data = cancer[cancer$sub_types == 'Triple negative',], cut=c(50), episode= "tgroup", id="id")
+
+cox.step1 <- coxph(Surv(tstart, overall_survival_months, event) ~ type_of_breast_surgery:strata(tgroup) + chemotherapy:strata(tgroup) + hormone_therapy:strata(tgroup) + radio_therapy, data=vet2)
+summary(cox.step1)
+
+ph <- cox.zph(cox.step1)
+ph
+# -HP Assumption met, but the model is not significant
+```
+
+
+LOGISTIC REGRESSION
+
+```{r}
+
+cancer$tumor_size <- as.integer(cancer$tumor_size)
+cancer$lymph_nodes_examined_positive <- as.integer(cancer$lymph_nodes_examined_positive)
+
+cancer$stage_size <- rep(0, dim(cancer)[1])
+cancer$stage_node <- rep(0, dim(cancer)[1])
+
+
+cancer$metastasis1 <- ifelse(cancer$lymph_nodes_examined_positive > 4, 1, 0)
+
+
+
+
+# MODELLO
+mod.glm <- glm(metastasis ~ nottingham_prognostic_index + inferred_menopausal_state + tumor_size + her2_status + er_status + pr_status + tp53 + pik3ca, family=binomial(link=logit), data = cancer)
+summary(mod.glm)
+
+
+
+# COEFF. MODELLO
+coeff_mod <- exp(coef(mod.glm))
+coeff_mod
+
+
+
+p_threshold = 0.5
+
+Y.hat <- ifelse(mod.glm$fitted.values<p_threshold, 0, 1) 
+Y.hat # predicted values
+
+table(Predicted = Y.hat, Observed = cancer$lymph_nodes_examined_positive)
+
+# SENSITIVITY
+Sensitivity(y_true = cancer$lymph_nodes_examined_positive, y_pred = Y.hat, positive = 1)
+# SPECIFCITY
+Specificity(y_true = cancer$lymph_nodes_examined_positive, y_pred = Y.hat, positive = 1)
+# ACCURACY
+Accuracy(y_pred = Y.hat, y_true = cancer$lymph_nodes_examined_positive)
+
+
+# ROC CURVE
+
+ROC_curve <- roc(response = cancer$metastasis, predictor = mod.glm$fitted.values,
+                 levels = c('0','1'),
+                 smooth=FALSE, plot=TRUE, print.auc=TRUE, auc.polygon=TRUE,
+                 main="ROC Curve")
+ROC_curve
+
+coords(ROC_curve, x="best", transpose = TRUE)
+```
+
+We can now compute the performances using 10-folds - VEDERE SE AUC HA UN VALORE SIMILE CON LA CROSS VALIDATION
+
+```{r}
+N <- dim(cancer)[1]
+N
+
+K = 10
+folds <- cut(seq(1,N), breaks=K ,labels=FALSE)#Create K equally size folds (if possible)
+set.seed(1234)
+folds <- sample(folds)#Randomly shuffle the observations
+table(folds)
+folds
+
+```
+
+```{r}
+sensitivity<-NULL
+specificity<-NULL
+AUC<-NULL
+
+for(k in 1:10){
+  train.data <- cancer[which(folds!=k),]
+  test.data <- cancer[which(folds==k),]
+  
+  mod.glm.k <- glm(lymph_nodes_examined_positive10 ~ , family=binomial(link=logit), data = cancer)
+  p.hat.k <- predict(mod.glm.k, newdata = data.frame(test.data), type='response' )
+  Y.hat.k <- Y.hat <- ifelse(p.hat.k <p_threshold, 0, 1) 
+
+  sensitivity <- c(sensitivity,
+                  Sensitivity(y_true =  test.data$lymph_nodes_examined_positive1, y_pred = Y.hat, positive = 1)
+                   )
+  specificity <- c(specificity,
+                  Specificity(y_true =  test.data$lymph_nodes_examined_positive1, y_pred = Y.hat, positive = 1)
+                   )  
+  
+  AUC <- c(AUC,
+           roc(response =  test.data$lymph_nodes_examined_positive1, predictor = Y.hat,
+                 levels = c('0','1'),
+                 smooth=FALSE, plot=F, print.auc=F)$auc
+  )
+  
+}
+```
+Vector of performances in terms of sensitivity for the k folds:
+
+```{r}
+sensitivity
+```
+
+Average sensitivity over the k folds
+
+```{r}
+mean(sensitivity)
+
+```
+
+Vector of performances in terms of specificity for the k folds:
+
+```{r}
+specificity
+```
+
+Average specificity over the k folds
+
+```{r}
+mean(specificity)
+sd(specificity)
+```
+
+Vector of performances in terms of AUC for the k folds
+
+```{r}
+AUC
+```
+
+Average specificity over the k folds
+
+
+```{r}
+mean(AUC)
+
+```
