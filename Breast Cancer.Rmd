@@ -3,14 +3,6 @@ ANALISI DATASET METABRIC
 
 _______ LIBRERIE NECESSARIE PER ESEGUIRE I COMANDI:
 ```{r}
-#install.packages('DAAG')
-#install.packages('corrgram')
-
-# LIBRERIE PER CORRELAZIONE
-library(DAAG)
-library(frailtyEM)
-library(corrgram)
-
 # LIBRERIE PER SURVIVAL ANALYSIS
 library(survival)
 library(ggsurvfit)
@@ -30,23 +22,24 @@ _______ CARICARE DATASET
 
 ```{r}
 cancer <- read.csv("METABRIC_RNA_Mutation.csv", na.strings = c(""))
-View(cancer)
 ```
 
 _______ DATA-CLEANING AND CREATING NEW VARIABLES
  
 1) Removing columns not relevant for the analysis
 ```{r}
-# GENI DI INTERESSE: PTEN, CHEK2, CDH1
 gene_of_interest <- cancer[,names(cancer) %in% 
                    c('cdh1','gata3','tp53','pik3ca')]
+
 cancer <- cancer[,1:31]
+
 cancer <- cancer[,!names(cancer) %in% 
                    c("cancer_type", "er_status_measured_by_ihc",
                      "her2_status_measured_by_snp6",
-                     "mutation_count",
+                     "mutation_count", "cohort",
                      "oncotree_code", 'X3.gene_classifier_subtype',
                      "ER.status.measured.by.IHC", "integrative_cluster")]
+
 cancer <- cbind(cancer, gene_of_interest)
 ```
 
@@ -55,7 +48,7 @@ cancer <- cbind(cancer, gene_of_interest)
 # Togliere NA per l'età di diagnosi (se ce ne sono)
 cancer <- cancer[!is.na(cancer$age_at_diagnosis),]
 
-# Togliere tutti i tipi d itumore == 'Breast' (dovrebbero esssere 17). Perchè gli togliamo? Perchè non è un tumore specifico
+# Togliere tutti i tipi di tumore == 'Breast', perché non ha senso
 cancer <- cancer[!(cancer$cancer_type_detailed == "Breast"),]
 cancer <- cancer[!is.na(cancer$type_of_breast_surgery),]
 
@@ -91,6 +84,8 @@ sub_ty <- function(x) {
 
 cancer$mol_subtypes <- apply(cancer,1,sub_ty)
 cancer$mol_subtypes <- as.factor(cancer$mol_subtypes)
+
+table(cancer$mol_subtypes)
 ```
 
 
@@ -110,13 +105,18 @@ age_int <- function(x){
   
 }
 
-cancer$interval_age <- apply(cancer,1,age_int)
+cancer$interval_age <- apply(cancer, 1, age_int)
 # CAMBIATO AGE IN INTERVALS. TRA UNDR &= E OVER &= PERCHE' INTANTO NEL MODELLO L'ETA' SAREBBE STATA SIGNIFICATIVA MA CON HR 1.007773 QUINDI SAREBBE STATO UN FATTORE DI RISCHIO CHE AUMENTAVA DEL 0.07 % (QUINDI PRATICAMENTE INSIGNIFICANTE). DIVIDENDO IN GRUPPPI HO ANCHE FATTO LE KM CURVES.
 ```
 
 5) Column metastasis
 ```{r}
-cancer$metastasis <- ifelse(cancer$gata3 < 0 & cancer$tp53 < 0 & cancer$pik3ca > 1 & cancer$cdh1 < 0, 1, 0)
+cancer$metastasis <- 
+  ifelse(cancer$gata3 < 0 & 
+           cancer$tp53 < 0 & 
+           cancer$pik3ca > 1 & 
+           cancer$cdh1 < 0, 1, 0)
+
 cancer$metastasis[cancer$grade == 4] <- 1
 cancer$metastasis[cancer$lymph_nodes_examined_positive > 10] <- 1
 ```
@@ -131,10 +131,14 @@ cancer$stage_size[cancer$tumor_size > 20 & cancer$tumor_size <= 50] <- 'T2'
 cancer$stage_size[cancer$tumor_size > 50] <- 'T3'
 
 cancer$stage_node[cancer$lymph_nodes_examined_positive == 0] <- 'N0'
-cancer$stage_node[cancer$lymph_nodes_examined_positive >= 1 & cancer$lymph_nodes_examined_positive <= 3] <- 'N1'
-cancer$stage_node[cancer$lymph_nodes_examined_positive > 3 & cancer$lymph_nodes_examined_positive <= 9] <- 'N2'
-cancer$stage_node[cancer$lymph_nodes_examined_positive > 9] <- 'N3'
 
+cancer$stage_node[cancer$lymph_nodes_examined_positive >= 1 &
+                    cancer$lymph_nodes_examined_positive <= 3] <- 'N1'
+
+cancer$stage_node[cancer$lymph_nodes_examined_positive > 3 &
+                    cancer$lymph_nodes_examined_positive <= 9] <- 'N2'
+
+cancer$stage_node[cancer$lymph_nodes_examined_positive > 9] <- 'N3'
 
 table(cancer$tumor_stage[cancer$stage_size == 'T3' & cancer$stage_node == 'N4'])
 
@@ -167,7 +171,10 @@ table(cancer$grade)
 # La colonna overall_survavial_status è la nostra colonna status, ovvera quella che ci dice se il paziente è ancora vivo (VALORE 1, ovvero censoring o ha finito lo studio) o se i paziente è morto (VALORE 0). Questo passaggio serve per creare correttamente il cox model in modo corretto.
 #  `status`: censoring status 1=censored, 2=dead
 
-cancer$overall_survival <- replace(cancer$overall_survival, cancer$death_from_cancer == "Died of Other Causes", 1)
+cancer$overall_survival <- replace(cancer$overall_survival, 
+                                   cancer$death_from_cancer == "Died of Other Causes",
+                                   1)
+
 cancer$overall_survival <- as.factor(cancer$overall_survival)
 
 # Comandi per trasformare le variabili in fattori
@@ -193,7 +200,8 @@ _______ DESCRIPTIVE ANALYSIS
 
 1) Distribuzione dell'età
 ```{r}
-summary(cancer$age_at_diagnosis) 
+summary(cancer$age_at_diagnosis)
+
 ggplot(cancer, aes(x=cancer$age_at_diagnosis)) + 
   geom_histogram(binwidth=5, fill = "green", color = "darkgreen") +
   labs(x = "Age at Cancer Diagnosis", y = "Frequencies")
@@ -201,6 +209,7 @@ ggplot(cancer, aes(x=cancer$age_at_diagnosis)) +
 
 age_alive <- cancer$age_at_diagnosis[cancer$overall_survival == 1]
 shapiro.test(age_alive) # p-value = 5.272e-07
+
 age_dead <- cancer$age_at_diagnosis[cancer$overall_survival == 0]
 shapiro.test(age_dead) # p-value = 0.001477
 
@@ -216,10 +225,10 @@ data <- data.frame(
 )
 
 # Represent it
-p <-ggplot(data, aes(x=value, fill=type)) +
-    geom_histogram( color="#e9ecef", alpha=0.6, position = 'identity') +
-    scale_fill_manual(values=c("#69b3a2", "#404080")) +
-    labs(fill="")
+p <- ggplot(data, aes(x=value, fill=type)) +
+     geom_histogram( color="#e9ecef", alpha=0.6, position = 'identity') +
+     scale_fill_manual(values=c("#69b3a2", "#404080")) +
+     labs(fill="")
 p
 ```
 
@@ -246,11 +255,19 @@ ggplot(types, aes(x = "", y = value,
 3) BARPLOT OF GRADE (QUANTO DIFFERENZIATO) FOR EACH SUBTYPES
 ```{r}
 table(cancer$neoplasm_histologic_grade[cancer$sub_types == 'claudin-low'])
-num <- c(1/288, 33/288, 254/288,     0/117, 15/117, 102/117,      142/1201, 599/1201, 460/1201,       3/94, 28/94, 63/94)
-name <- c(rep('ER-/HER2-',3), rep('ER-/HER2+',3), rep('ER+/HER2-',3), rep('ER+/HER2+',3))
+
+num <- c(1/288, 33/288, 254/288, 0/117, 15/117, 102/117, 142/1201, 
+         599/1201, 460/1201, 3/94, 28/94, 63/94)
+
+name <- c(rep('ER-/HER2-',3), 
+          rep('ER-/HER2+',3), 
+          rep('ER+/HER2-',3), 
+          rep('ER+/HER2+',3))
+
 grade  <- as.factor(rep(c(1,2,3), 4))
 
 data <- data.frame(name, grade, num)
+
 ggplot(data, aes(fill= grade, y= num, x=name)) + 
     geom_bar(position="dodge", stat="identity") +
     ggtitle("Histologic grades by tumor sub-types") +
@@ -264,47 +281,72 @@ _______ NON PARAMETRIC TESTS
 1) Whitney-mann U test to see if there is a different age distribution among tumor sub-types
 ```{r}
 # GRAFICI ETA'
-
 Age_Nothing <- cancer$age_at_diagnosis[cancer$mol_subtypes == 'ER-/HER2-']
-shapiro.test(Age_Nothing) #p-value = 7.489e-05, does not follow thee normal distribution
+
 Age_HER2 <- cancer$age_at_diagnosis[cancer$mol_subtypes == 'ER-/HER2+']
-shapiro.test(Age_HER2) #p-value = 0.0001012, does not follow thee normal distribution
- Age_ER <- cancer$age_at_diagnosis[cancer$mol_subtypes == 'ER+/HER2-']
-shapiro.test(Age_ER) #p-value = 0.5033, follows the normal distribution
+
+Age_ER <- cancer$age_at_diagnosis[cancer$mol_subtypes == 'ER+/HER2-']
+
 Age_HER2.ER <- cancer$age_at_diagnosis[cancer$mol_subtypes == 'ER+/HER2+']
-shapiro.test(Age_HER2.ER) #p-value = 0.009004, does not follow the normal distribution
-
-
 
 par(mfrow=c(2,4))
-hist(Age_Nothing, prob=T, main = 'Age of diagnosis ER-/HER2-',xlab="",breaks = 10, col = "#69b3a2")
+hist(Age_Nothing, 
+     prob=T, 
+     main = 'Age of diagnosis ER-/HER2-',
+     xlab="",
+     breaks = 10, 
+     col = "#69b3a2")
 
-hist(Age_HER2, prob=T, main = 'Age of diagnosis ER-/HER2+',xlab="",breaks = 10, col = '#404080')
+hist(Age_HER2, 
+     prob=T, 
+     main = 'Age of diagnosis ER-/HER2+',
+     xlab="",
+     breaks = 10, 
+     col = '#404080')
 
-hist(Age_ER, prob=T, main = 'Age of diagnosis ER+/HER2-',xlab="",breaks = 10, col = "blue")
+hist(Age_ER, 
+     prob=T, 
+     main = 'Age of diagnosis ER+/HER2-', 
+     xlab="",
+     breaks = 10, 
+     col = "blue")
 
-hist(Age_HER2.ER, prob=T, main = 'Age of diagnosis ER+/HER2+',xlab="",breaks = 10, col = "purple")
+hist(Age_HER2.ER, 
+     prob=T, 
+     main = 'Age of diagnosis ER+/HER2+',
+     xlab="",
+     breaks = 10, 
+     col = "purple")
 
 
+boxplot(Age_Nothing,  
+        main = 'Boxplot of Age of diagnosis ER-/HER2-',
+        ylab="", col = "#69b3a2")
 
+boxplot(Age_HER2,  
+        main = 'Boxplot of Age of diagnosis ER-/HER2+',
+        ylab="", 
+        col = '#404080')
 
-boxplot(Age_Nothing,  main = 'Boxplot of Age of diagnosis ER-/HER2-',ylab="", col = "#69b3a2")
+boxplot(Age_ER,  
+        main = 'Boxplot of Age of diagnosis ER+/HER2-', 
+        ylab="", 
+        col = "blue")
 
-boxplot(Age_HER2,  main = 'Boxplot of Age of diagnosis ER-/HER2+',ylab="", col = '#404080')
-
-boxplot(Age_ER,  main = 'Boxplot of Age of diagnosis ER+/HER2-',ylab="", col = "blue")
-
-boxplot(Age_HER2.ER,  main = 'Boxplot of Age of diagnosis ER+/HER2+',ylab="", col = "purple")
+boxplot(Age_HER2.ER,  
+        main = 'Boxplot of Age of diagnosis ER+/HER2+',
+        ylab="", 
+        col = "purple")
 
 ```
 
-
-Resampling approch
+Resampling approch, non c'è un sottotipo che colpisce differentemente per età.
 ```{r}
 
 # Age_Nothing / Age_HER2 / Age_ER / Age_HER2.PR
-t <- t.test(Age_ER, Age_HER2.PR, var.equal = T)
+t <- t.test(Age_Nothing, Age_HER2.ER, var.equal = T, alternative = "two.sided")
 TT <- t$statistic
+TT
 
 n1 <- length(Age_ER)
 n2 <- length(Age_HER2.ER)
@@ -316,25 +358,26 @@ Tbs <- rep(NA, B)
 for (b in 1:B) {
   
 dat<-sample(c(Age_ER, Age_HER2.ER))
-Tbs[b]<-t.test(dat[1:n1], dat[(n1 + 1):(n1 + n2)], var.equal = TRUE)$statistic
+Tbs[b]<-
+  t.test(dat[1:n1], dat[(n1 + 1):(n1 + n2)], 
+         var.equal = TRUE, 
+         alternative = "two.sided")$statistic
 }
 
-p.value.resample <- mean ((abs(Tbs) >= abs(TT)))
+p.value.resample <- mean(abs(Tbs[abs(Tbs) >= abs(TT)]))
 p.value.resample
 
 # Age_Nothing / Age_HER2 <- No difference
 # Age_Nothing / Age_ER <- No difference
 # Age_Nothing / Age_HER2.ER <- Difference
-# Age_HER2 / Age_ER <- No difference
+# Age_HER2 / Age_ER <- No difference, in all 3 possibilities
 # Age_HER2 / Age_HER2.ER <- No difference
-# Age_HER2.PR/ Age_ER <-No difference
 
-# mANCA CORREZZIONE P-VALUES !!
 ``` 
 
-2) Spearman correlation test and chi-square test between tumor grade and each single subtypes
+2)chi-square test between tumor grade and each single subtypes
 ```{r}
-# PRIMO TEST - Vedere la correlazione tra nottingham index e il numero di linfonodi positivi
+# PRIMO TEST - Vedere la correlazione tra neoplasm histologic grade e survival
 
 contingency_table1 <- table(cancer$neoplasm_histologic_grade, cancer$overall_survival)
 colnames(contingency_table1) <- c('Dead','Alive')
@@ -346,7 +389,9 @@ chi_test
 
 # There is a correlation between the tumor grade and the overall survival <- p-value = 3.99e-11
 
+#TEST 2: tra molecular subtype e survival
 cancer$mol_subtypes <- as.factor(cancer$mol_subtypes)
+
 contingency_table2 <- table(cancer$mol_subtypes, cancer$overall_survival)
 colnames(contingency_table2) <- c('Dead','Alive')
 contingency_table2
@@ -356,6 +401,7 @@ chi_test
 
 # There is a correlation between the mol. subtypes and the overall survival <- p-value = 1.724e-09
 
+#TEST 3: stage size e suvival
 contingency_table3 <- table(cancer$stage_size, cancer$overall_survival)
 colnames(contingency_table2) <- c('Dead','Alive')
 contingency_table3
@@ -365,6 +411,8 @@ chi_test
 
 # There is a correlation between tumor size and overall survival (p-value = 9.425e-11)
 
+
+#TEST 4: intervalli età e survival (under 60 e over 60)
 contingency_table4 <- table(cancer$interval_age, cancer$overall_survival)
 colnames(contingency_table2) <- c('Dead','Alive')
 contingency_table4
@@ -375,9 +423,7 @@ chi_test
 # There is no correlation between tumor size and overall survival (p-value = 0.3575)
 ```
 
-
-
-_______ SURVIAVL ANALYSIS
+_______ SURVIVAL ANALYSIS
 
 
 1) KM curves per i vari sottotipi di tumore
@@ -577,40 +623,13 @@ decision_HM
 
 # C'è differenza tra tutte le curve
 ```
-
-5) KM curves for chemotherapy (0: No chemotherapy, 1: chemotherapy)
-```{r}
-# Utilizziamo la colonna sub_types per dividire a seconda del tipo di tumore presenta
-survival <- Surv(cancer$overall_survival_months, cancer$overall_survival == 0)
-
-# Creazione curve per i vari sub-types
-sub_types_curves <- survfit(survival ~ chemotherapy, data = cancer)
-
-# Plot delle curve di sopravvivenza
-survfit2(survival ~ chemotherapy, data = cancer) |>
-  ggsurvfit(linewidth = 1) +
-  add_confidence_interval() + # add confidence interval
-  add_risktable() + # Add risk table
-  add_quantile(y_value = 0.5, color = "gray50", linewidth = 0.75)+  # Specify median survival
-  labs(title = "Kaplan-Meier Curve for Metastasis in Breast Cancer",
-       x="Follow-up time (months)")+
-  scale_x_continuous(breaks = seq(0,1000,by=90))
-```
-- Log-rank test per metastasi
-```{r}
-test <- survdiff(Surv(cancer$overall_survival_months, cancer$overall_survival == 0) ~ metastasis, data=cancer)
-test
-
-# Curve diverse
-```
-
-
 _______ COX MODEL (TIME DEPENDENT COEFF.)
 
 ```{r}
 
 vet2 <- survSplit(Surv(overall_survival_months, overall_survival == 0) ~
                     age_at_diagnosis +
+                    type_of_breast_surgery +
                     stage_size +
                     er_status +
                     her2_status+ 
@@ -622,6 +641,7 @@ vet2 <- survSplit(Surv(overall_survival_months, overall_survival == 0) ~
 
 cox.vet2 <- coxph(Surv(overall_survival_months, event) ~
                    age_at_diagnosis +
+                   type_of_breast_surgery +
                    stage_size +
                    er_status:strata(tgroup) + 
                    her2_status +
@@ -635,31 +655,61 @@ ggcoxdiagnostics(cox.vet2, type = "martingale",linear.predictions = T)
 ggcoxdiagnostics(cox.vet2, type = "deviance",linear.predictions = T)
 ```
 
-
-
 _______ LOGISTIC REGRESSION
 
 
 ```{r}
 # MODELLO
-mod.glm <- glm(metastasis ~ lymph_nodes_examined_positive + tumor_size + her2_status + er_status + tp53 + pik3ca, family=binomial(link=logit), data = cancer)
+mod.glm <- glm(metastasis ~ 
+                 cancer_type_detailed +
+                 cellularity +
+                 tumor_other_histologic_subtype +
+                 inferred_menopausal_state +
+                 nottingham_prognostic_index +
+                 lymph_nodes_examined_positive +
+                 tumor_size +
+                 her2_status + 
+                 er_status +
+                 neoplasm_histologic_grade, 
+               family=binomial(link=logit), data = cancer)
 summary(mod.glm)
 
+mod.glm2 <- glm(metastasis ~ 
+                 nottingham_prognostic_index +
+                 lymph_nodes_examined_positive +
+                 er_status +
+                 neoplasm_histologic_grade, 
+               family=binomial(link=logit), data = cancer)
+summary(mod.glm2)
+
+anova(mod.glm, mod.glm2, test = "LRT")
 # COEFF. MODELLO
-coeff_mod <- exp(coef(mod.glm))
-coeff_mod
+#coeff_mod <- exp(coef(mod.glm))
+#coeff_mod
 ```
 
 
 ```{r}
 N <- dim(cancer)[1]
-p_threshold = sum(cancer$metastasis)/N
+p_threshold <- sum(cancer$metastasis)/N
 p_threshold
 
-Y.hat <- ifelse(mod.glm$fitted.values<p_threshold, 0, 1) 
+Y.hat <- ifelse(mod.glm2$fitted.values < p_threshold, 0, 1) 
+
+Specificity(y_true = cancer$metastasis, y_pred = Y.hat, positive = 1)
+Sensitivity(y_true = cancer$metastasis, y_pred = Y.hat, positive = 1)
+
+ROC_curve <- roc(response = cancer$metastasis, 
+                 predictor = mod.glm2$fitted.values,
+                 levels = c('0','1'),
+                 smooth=FALSE, 
+                 plot=TRUE, 
+                 print.auc=TRUE, 
+                 auc.polygon=TRUE,
+                 main = "ROC Curve")
 ```
-
-
+empiric specificity 0.870625, empiric sentivity 0.7983871, empiric threshold 0.07192575
+auc 0.899
 ```{r}
 K = 10
 folds <- cut(seq(1,N), breaks=K ,labels=FALSE)#Create K equally size folds (if possible)
@@ -669,40 +719,42 @@ table(folds)
 folds
 
 
-sensitivity<-NULL
-specificity<-NULL
-AUC<-NULL
+sensitivity <- NULL
+specificity <- NULL
+AUC <- NULL
 
 for(k in 1:10){
-  train.data <- cancer[which(folds!=k),]
-  test.data <- cancer[which(folds==k),]
+  train.data <- cancer[which(folds != k),]
+  test.data <- cancer[which(folds == k),]
   
-  mod.glm.k <- mod.glm <- glm(metastasis ~ 
-                                lymph_nodes_examined_positive +
-                                tumor_size +
-                                her2_status +
-                                er_status +
-                                tp53 +
-                                pik3ca,
+  mod.glm.k <- mod.glm2 <- glm(metastasis ~ 
+                                  nottingham_prognostic_index +
+                                  lymph_nodes_examined_positive +
+                                  er_status +
+                                  neoplasm_histologic_grade, 
                                 family=binomial(link=logit), data = cancer)
   
   p.hat.k <- predict(mod.glm.k, newdata = data.frame(test.data), type='response' )
-  Y.hat.k <- Y.hat <- ifelse(p.hat.k <p_threshold, 0, 1) 
+  Y.hat.k <- Y.hat <- ifelse(p.hat.k < p_threshold, 0, 1) 
 
   sensitivity <- c(sensitivity,
-                  Sensitivity(y_true =  test.data$metastasis, y_pred = Y.hat, positive = 1)
+                  Sensitivity(y_true =  test.data$metastasis, 
+                              y_pred = Y.hat, positive = 1)
                    )
+  
   specificity <- c(specificity,
-                  Specificity(y_true =  test.data$metastasis, y_pred = Y.hat, positive = 1)
+                  Specificity(y_true =  test.data$metastasis, 
+                              y_pred = Y.hat, positive = 1)
                    )  
   
-  AUC <- c(AUC,
-           roc(response =  test.data$metastasis, predictor = Y.hat,
+  cross_roc <- roc(response =  test.data$metastasis, predictor = Y.hat,
                  levels = c('0','1'),
-                 smooth=FALSE, plot=F, print.auc=F)$auc
-  )
+                 smooth=FALSE, plot=F, print.auc=F)
   
+  AUC <- c(AUC, cross_roc$auc)
 }
+
+coords(cross_roc, x="best", transpose=T)
 ```
 
 Vector of performances in terms of sensitivity for the k folds:
